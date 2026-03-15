@@ -1,0 +1,12 @@
+node_modules/
+out/
+dist/
+build/icon.iconset/
+.env
+.env.*
+*.pem
+*.key
+airmonitor-data.json
+.DS_Store
+Thumbs.db
+*.log
