@@ -1,0 +1,16 @@
+[Unit]
+Description=AirMonitor SDS011 MQTT Publisher
+After=network-online.target mosquitto.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=danny
+ExecStart=/home/danny/airmonitor-venv/bin/python /home/danny/publisher.py --broker localhost --interval 60
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
