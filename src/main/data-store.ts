@@ -20,6 +20,8 @@ export async function initStore(): Promise<void> {
   const instance = new Low<StoreData>(adapter, defaultData)
   try {
     await instance.read()
+    // Backfill new default fields into existing settings
+    instance.data.settings = { ...DEFAULT_SETTINGS, ...instance.data.settings }
   } catch {
     instance.data = defaultData
     await instance.write()
@@ -32,7 +34,7 @@ function getDb() {
   return db
 }
 
-const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
+const THIRTY_DAYS = 30 * 24 * 60 * 60 * 1000
 const WRITE_DEBOUNCE_MS = 5000
 
 function scheduleWrite(): void {
@@ -54,7 +56,7 @@ function scheduleWrite(): void {
 export async function addReading(reading: SensorReading): Promise<void> {
   const store = getDb()
   store.data.readings.push(reading)
-  const cutoff = Date.now() - TWENTY_FOUR_HOURS
+  const cutoff = Date.now() - THIRTY_DAYS
   store.data.readings = store.data.readings.filter(r => r.timestamp >= cutoff)
   scheduleWrite()
 }
@@ -62,6 +64,14 @@ export async function addReading(reading: SensorReading): Promise<void> {
 export function getReadings(since: number): SensorReading[] {
   const store = getDb()
   return store.data.readings.filter(r => r.timestamp >= since)
+}
+
+export async function importReadings(piReadings: SensorReading[]): Promise<void> {
+  const store = getDb()
+  const piTimestamps = new Set(piReadings.map(r => r.timestamp))
+  const localOnly = store.data.readings.filter(r => !piTimestamps.has(r.timestamp))
+  store.data.readings = [...piReadings, ...localOnly].sort((a, b) => a.timestamp - b.timestamp)
+  await store.write()
 }
 
 export function getSettings(): Settings {

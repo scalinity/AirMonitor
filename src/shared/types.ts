@@ -16,6 +16,7 @@ export interface Settings {
   topic: string
   refreshInterval: number
   useMockData: boolean
+  piDatabaseUrl: string
   thresholds: {
     pm25: number
     pm10: number
@@ -34,11 +35,13 @@ export interface Alert {
 export interface ElectronAPI {
   getHistory: (since: number) => Promise<SensorReading[]>
   getSettings: () => Promise<Settings>
+  getConnectionStatus: () => Promise<ConnectionStatus>
   saveSettings: (settings: Settings) => Promise<void>
   setContinuous: (enabled: boolean) => Promise<void>
   onSensorData: (callback: (reading: SensorReading) => void) => () => void
   onConnectionStatus: (callback: (status: ConnectionStatus) => void) => () => void
   onContinuousMode: (callback: (enabled: boolean) => void) => () => void
+  onHistoryUpdated: (callback: () => void) => () => void
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -46,6 +49,7 @@ export const DEFAULT_SETTINGS: Settings = {
   topic: 'airmonitor/data',
   refreshInterval: 5,
   useMockData: true,
+  piDatabaseUrl: 'http://192.168.34.17:8080/airmonitor.db',
   thresholds: {
     pm25: 35,
     pm10: 150

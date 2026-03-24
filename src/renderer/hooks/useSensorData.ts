@@ -10,6 +10,8 @@ interface UseSensorDataResult {
   dismissAlert: (id: string) => void
 }
 
+const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
+
 export function useSensorData(
   thresholds?: { pm25: number; pm10: number }
 ): UseSensorDataResult {
@@ -26,16 +28,20 @@ export function useSensorData(
   }, [thresholds])
 
   useEffect(() => {
-    const since = Date.now() - 24 * 60 * 60 * 1000
+    const since = Date.now() - TWENTY_FOUR_HOURS
     window.api.getHistory(since).then((history) => {
       setReadings(history)
     }).catch((err) => {
       console.error('Failed to load history:', err)
     })
 
+    window.api.getConnectionStatus().then((status) => {
+      setConnectionStatus(status)
+    }).catch(() => {})
+
     const removeSensorData = window.api.onSensorData((reading: SensorReading) => {
       setReadings((prev) => {
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000
+        const cutoff = Date.now() - TWENTY_FOUR_HOURS
         const filtered = prev.filter(r => r.timestamp >= cutoff)
         return [...filtered, reading]
       })
@@ -74,9 +80,20 @@ export function useSensorData(
       setConnectionStatus(status)
     })
 
+    // Re-fetch 24h data when Pi sync completes in the background
+    const removeHistoryUpdated = window.api.onHistoryUpdated(() => {
+      const cutoff = Date.now() - TWENTY_FOUR_HOURS
+      window.api.getHistory(cutoff).then((history) => {
+        setReadings(history)
+      }).catch((err) => {
+        console.error('Failed to reload history after sync:', err)
+      })
+    })
+
     return () => {
       removeSensorData()
       removeStatus()
+      removeHistoryUpdated()
     }
   }, [])
 

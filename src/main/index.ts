@@ -1,14 +1,16 @@
 import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
-import { initStore, addReading, getReadings, getSettings, saveSettings } from './data-store'
+import { initStore, addReading, getReadings, getSettings, saveSettings, importReadings } from './data-store'
 import { generateMockReading } from './mock-data'
 import { MqttSensorClient } from './mqtt-client'
 import { SensorReading, Settings, ConnectionStatus } from '../shared/types'
+import { syncPiDatabase } from './pi-sync'
 
 let mainWindow: BrowserWindow | null = null
 let mockInterval: ReturnType<typeof setInterval> | null = null
 let isContinuous = false
+let currentConnectionStatus: ConnectionStatus = 'disconnected'
 const mqttClient = new MqttSensorClient()
 
 function createWindow(): void {
@@ -105,6 +107,7 @@ function connectMqtt(settings: Settings): void {
   })
 
   mqttClient.on('status', (status: ConnectionStatus) => {
+    currentConnectionStatus = status
     sendToRenderer('sensor:status', status)
   })
 
@@ -146,6 +149,8 @@ function validateSettings(raw: unknown): Settings {
   }
   if (typeof s.useMockData !== 'boolean') throw new Error('Invalid useMockData')
 
+  const piDatabaseUrl = typeof s.piDatabaseUrl === 'string' ? s.piDatabaseUrl : ''
+
   if (!s.thresholds || typeof s.thresholds !== 'object') throw new Error('Invalid thresholds')
   const t = s.thresholds as Record<string, unknown>
   if (typeof t.pm25 !== 'number' || !Number.isFinite(t.pm25) || t.pm25 < 0) {
@@ -160,6 +165,7 @@ function validateSettings(raw: unknown): Settings {
     topic: s.topic,
     refreshInterval: Math.round(s.refreshInterval),
     useMockData: s.useMockData,
+    piDatabaseUrl,
     thresholds: { pm25: t.pm25, pm10: t.pm10 }
   }
 }
@@ -170,6 +176,10 @@ function registerIpcHandlers(): void {
       throw new Error('Invalid since parameter')
     }
     return getReadings(since)
+  })
+
+  ipcMain.handle('sensor:get-connection-status', () => {
+    return currentConnectionStatus
   })
 
   ipcMain.handle('sensor:get-settings', () => {
@@ -235,6 +245,19 @@ app.whenReady().then(async () => {
     registerIpcHandlers()
     createWindow()
     await startDataSource()
+
+    const settings = getSettings()
+    if (settings.piDatabaseUrl) {
+      syncPiDatabase(settings.piDatabaseUrl)
+        .then(async (piReadings) => {
+          await importReadings(piReadings)
+          console.log(`Imported ${piReadings.length} readings from Pi database`)
+          sendToRenderer('sensor:history-updated', null)
+        })
+        .catch((err) => {
+          console.error('Pi database sync failed (continuing with local data):', err)
+        })
+    }
   } catch (err) {
     console.error('Failed to initialize app:', err)
     app.quit()

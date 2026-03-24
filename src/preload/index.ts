@@ -3,6 +3,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 const api = {
   getHistory: (since: number) => ipcRenderer.invoke('sensor:get-history', since),
   getSettings: () => ipcRenderer.invoke('sensor:get-settings'),
+  getConnectionStatus: () => ipcRenderer.invoke('sensor:get-connection-status'),
   saveSettings: (settings: unknown) => ipcRenderer.invoke('sensor:save-settings', settings),
   setContinuous: (enabled: boolean) => ipcRenderer.invoke('sensor:set-continuous', enabled),
   onSensorData: (callback: (reading: unknown) => void) => {
@@ -19,6 +20,11 @@ const api = {
     const handler = (_event: Electron.IpcRendererEvent, enabled: boolean) => callback(enabled)
     ipcRenderer.on('sensor:continuous', handler)
     return () => { ipcRenderer.removeListener('sensor:continuous', handler) }
+  },
+  onHistoryUpdated: (callback: () => void) => {
+    const handler = () => callback()
+    ipcRenderer.on('sensor:history-updated', handler)
+    return () => { ipcRenderer.removeListener('sensor:history-updated', handler) }
   }
 }
 
