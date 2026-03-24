@@ -1,0 +1,12 @@
+appId: com.airmonitor.app
+productName: AirMonitor
+directories:
+  buildResources: build
+  output: dist
+mac:
+  icon: build/icon.icns
+  category: public.app-category.utilities
+  target:
+    - target: dir
+      arch:
+        - arm64

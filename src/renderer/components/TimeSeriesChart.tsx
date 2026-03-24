@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -15,26 +15,121 @@ interface TimeSeriesChartProps {
   readings: SensorReading[]
 }
 
-type TimeRange = '1h' | '6h' | '24h'
+type TimeRange = '1h' | '6h' | '24h' | '7d' | '14d' | '30d'
 
 const RANGE_MS: Record<TimeRange, number> = {
   '1h': 60 * 60 * 1000,
   '6h': 6 * 60 * 60 * 1000,
-  '24h': 24 * 60 * 60 * 1000
+  '24h': 24 * 60 * 60 * 1000,
+  '7d': 7 * 24 * 60 * 60 * 1000,
+  '14d': 14 * 24 * 60 * 60 * 1000,
+  '30d': 30 * 24 * 60 * 60 * 1000
+}
+
+const EXTENDED_RANGES = new Set<TimeRange>(['7d', '14d', '30d'])
+
+// Hourly aggregation bucket size for extended ranges
+const HOUR_MS = 60 * 60 * 1000
+
+function formatTimeLabel(timestamp: number, range: TimeRange): string {
+  const date = new Date(timestamp)
+  if (EXTENDED_RANGES.has(range)) {
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+  }
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+interface ChartPoint {
+  timestamp: number
+  pm25: number
+  pm10: number
+  time: string
+}
+
+function aggregateHourly(readings: SensorReading[], range: TimeRange): ChartPoint[] {
+  if (readings.length === 0) return []
+
+  const buckets = new Map<number, { pm25Sum: number; pm10Sum: number; count: number }>()
+
+  for (const r of readings) {
+    const bucketKey = Math.floor(r.timestamp / HOUR_MS) * HOUR_MS
+    const existing = buckets.get(bucketKey)
+    if (existing) {
+      existing.pm25Sum += r.pm25
+      existing.pm10Sum += r.pm10
+      existing.count++
+    } else {
+      buckets.set(bucketKey, { pm25Sum: r.pm25, pm10Sum: r.pm10, count: 1 })
+    }
+  }
+
+  return Array.from(buckets.entries())
+    .sort(([a], [b]) => a - b)
+    .map(([ts, bucket]) => ({
+      timestamp: ts,
+      pm25: Math.round((bucket.pm25Sum / bucket.count) * 10) / 10,
+      pm10: Math.round((bucket.pm10Sum / bucket.count) * 10) / 10,
+      time: formatTimeLabel(ts, range)
+    }))
 }
 
 export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
   const [range, setRange] = useState<TimeRange>('1h')
+  const [extendedReadings, setExtendedReadings] = useState<SensorReading[]>([])
+  const [loading, setLoading] = useState(false)
+  const fetchedRangeRef = useRef<TimeRange | null>(null)
+
+  // Fetch extended data when switching to a multi-day range
+  useEffect(() => {
+    if (!EXTENDED_RANGES.has(range)) {
+      fetchedRangeRef.current = null
+      return
+    }
+
+    // Already fetched for this or a wider range
+    if (fetchedRangeRef.current && RANGE_MS[fetchedRangeRef.current] >= RANGE_MS[range]) {
+      return
+    }
+
+    setLoading(true)
+    const since = Date.now() - RANGE_MS[range]
+    window.api.getHistory(since).then((history) => {
+      setExtendedReadings(history)
+      fetchedRangeRef.current = range
+    }).catch((err) => {
+      console.error('Failed to load extended history:', err)
+    }).finally(() => {
+      setLoading(false)
+    })
+  }, [range])
+
+  // Invalidate extended cache when Pi sync completes
+  useEffect(() => {
+    const remove = window.api.onHistoryUpdated(() => {
+      fetchedRangeRef.current = null
+      if (EXTENDED_RANGES.has(range)) {
+        const since = Date.now() - RANGE_MS[range]
+        window.api.getHistory(since).then(setExtendedReadings).catch(() => {})
+      }
+    })
+    return remove
+  }, [range])
 
   const filteredData = useMemo(() => {
+    const isExtended = EXTENDED_RANGES.has(range)
+    const source = isExtended ? extendedReadings : readings
     const cutoff = Date.now() - RANGE_MS[range]
-    return readings
-      .filter(r => r.timestamp >= cutoff)
-      .map(r => ({
-        ...r,
-        time: new Date(r.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      }))
-  }, [readings, range])
+    const filtered = source.filter(r => r.timestamp >= cutoff)
+
+    if (isExtended) {
+      return aggregateHourly(filtered, range)
+    }
+
+    return filtered.map(r => ({
+      ...r,
+      time: formatTimeLabel(r.timestamp, range)
+    }))
+  }, [readings, extendedReadings, range])
 
   const yMax = useMemo(() => {
     if (filteredData.length === 0) return 10
@@ -51,7 +146,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
       <div className="chart-header">
         <span className="chart-title">Particulate Matter</span>
         <div className="chart-range-buttons">
-          {(['1h', '6h', '24h'] as TimeRange[]).map(r => (
+          {(['1h', '6h', '24h', '7d', '14d', '30d'] as TimeRange[]).map(r => (
             <button
               key={r}
               className={`chart-range-btn ${range === r ? 'active' : ''}`}
@@ -62,6 +157,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
           ))}
         </div>
       </div>
+      {loading && <div style={{ color: '#7a8494', fontSize: 12, padding: '4px 0' }}>Loading...</div>}
       <ResponsiveContainer width="100%" height={220}>
         <AreaChart data={filteredData}>
           <defs>

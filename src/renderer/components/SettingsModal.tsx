@@ -9,13 +9,19 @@ interface SettingsModalProps {
 
 export default function SettingsModal({ settings, onSave, onClose }: SettingsModalProps) {
   const [form, setForm] = useState<Settings>({ ...settings })
+  const [intervalStr, setIntervalStr] = useState(String(settings.refreshInterval))
   const [saving, setSaving] = useState(false)
   const modalRef = useRef<HTMLDivElement>(null)
 
   const handleSave = async () => {
+    const parsed = parseInt(intervalStr)
+    const finalForm = {
+      ...form,
+      refreshInterval: Number.isFinite(parsed) && parsed >= 1 ? parsed : settings.refreshInterval
+    }
     setSaving(true)
     try {
-      await onSave(form)
+      await onSave(finalForm)
     } finally {
       setSaving(false)
     }
@@ -90,9 +96,9 @@ export default function SettingsModal({ settings, onSave, onClose }: SettingsMod
             id="refresh-interval"
             type="number"
             min={1}
-            max={60}
-            value={form.refreshInterval}
-            onChange={(e) => setForm({ ...form, refreshInterval: parseInt(e.target.value) || 5 })}
+            max={3600}
+            value={intervalStr}
+            onChange={(e) => setIntervalStr(e.target.value)}
           />
         </div>
 
