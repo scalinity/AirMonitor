@@ -1,18 +1,14 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, net } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import { initStore, addReading, getReadings, getSettings, saveSettings, importReadings } from './data-store'
 import { generateMockReading } from './mock-data'
-import { MqttSensorClient } from './mqtt-client'
-import { SensorReading, Settings, ConnectionStatus } from '../shared/types'
-import { syncPiDatabase } from './pi-sync'
+import { SensorReading, Settings } from '../shared/types'
+import { parsePiDatabase } from './pi-sync'
 
 let mainWindow: BrowserWindow | null = null
 let mockInterval: ReturnType<typeof setInterval> | null = null
 let isContinuous = false
-let currentConnectionStatus: ConnectionStatus = 'disconnected'
-const mqttClient = new MqttSensorClient()
-
 function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: 1200,
@@ -54,7 +50,7 @@ function createWindow(): void {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'"
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws: wss:"
           ]
         }
       })
@@ -66,6 +62,7 @@ function createWindow(): void {
   } else {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
 }
 
 function sendToRenderer(channel: string, data: unknown): void {
@@ -83,7 +80,7 @@ function handleReading(reading: SensorReading): void {
 
 function startMockData(intervalSeconds: number): void {
   stopMockData()
-  sendToRenderer('sensor:status', 'connected' as ConnectionStatus)
+  sendToRenderer('sensor:status', 'connected')
   mockInterval = setInterval(() => {
     const reading = generateMockReading()
     handleReading(reading)
@@ -98,29 +95,12 @@ function stopMockData(): void {
   }
 }
 
-function connectMqtt(settings: Settings): void {
-  mqttClient.disconnect()
-  mqttClient.removeAllListeners()
-
-  mqttClient.on('data', (reading: SensorReading) => {
-    handleReading(reading)
-  })
-
-  mqttClient.on('status', (status: ConnectionStatus) => {
-    currentConnectionStatus = status
-    sendToRenderer('sensor:status', status)
-  })
-
-  mqttClient.connect(settings.brokerUrl, settings.topic)
-}
-
 async function startDataSource(): Promise<void> {
   const settings = getSettings()
   if (settings.useMockData) {
     startMockData(isContinuous ? 1 : settings.refreshInterval)
-  } else {
-    connectMqtt(settings)
   }
+  // Real MQTT is handled by the renderer process using browser WebSocket
 }
 
 function validateSettings(raw: unknown): Settings {
@@ -178,38 +158,21 @@ function registerIpcHandlers(): void {
     return getReadings(since)
   })
 
-  ipcMain.handle('sensor:get-connection-status', () => {
-    return currentConnectionStatus
-  })
-
   ipcMain.handle('sensor:get-settings', () => {
     return getSettings()
   })
 
   ipcMain.handle('sensor:save-settings', async (_event, rawSettings: unknown) => {
-    const oldSettings = getSettings()
     const settings = validateSettings(rawSettings)
     await saveSettings(settings)
 
-    const connectionChanged = settings.brokerUrl !== oldSettings.brokerUrl ||
-      settings.topic !== oldSettings.topic ||
-      settings.useMockData !== oldSettings.useMockData
-
     if (settings.useMockData) {
-      mqttClient.disconnect()
-      startMockData(isContinuous ? 1 : settings.refreshInterval)
-    } else if (connectionChanged) {
       stopMockData()
-      mqttClient.disconnect()
-      await startDataSource()
+      startMockData(isContinuous ? 1 : settings.refreshInterval)
     } else {
-      // Only interval/thresholds changed — send command without reconnecting
-      const commandTopic = settings.topic.replace(/\/data$/, '/command')
-      mqttClient.publish(commandTopic, JSON.stringify({
-        command: 'set_interval',
-        interval: settings.refreshInterval
-      }))
+      stopMockData()
     }
+    // Renderer handles MQTT reconnection when it receives updated settings
   })
 
   ipcMain.handle('sensor:set-continuous', (_event, enabled: unknown) => {
@@ -219,14 +182,42 @@ function registerIpcHandlers(): void {
     const settings = getSettings()
     if (settings.useMockData) {
       startMockData(isContinuous ? 1 : settings.refreshInterval)
-    } else {
-      // Send command to the Pi to toggle its continuous mode
-      const commandTopic = settings.topic.replace(/\/data$/, '/command')
-      mqttClient.publish(commandTopic, JSON.stringify({
-        command: 'set_continuous',
-        enabled: isContinuous
-      }))
     }
+    // For real MQTT, the renderer publishes the command directly
+  })
+
+  ipcMain.handle('sensor:persist-reading', (_event, rawReading: unknown) => {
+    if (!rawReading || typeof rawReading !== 'object') return
+    const r = rawReading as Record<string, unknown>
+    if (typeof r.pm25 !== 'number' || typeof r.pm10 !== 'number') return
+    const reading: SensorReading = {
+      timestamp: typeof r.timestamp === 'number' ? r.timestamp : Date.now(),
+      pm25: r.pm25,
+      pm10: r.pm10,
+      temperature: typeof r.temperature === 'number' ? r.temperature : 0,
+      humidity: typeof r.humidity === 'number' ? r.humidity : 0,
+      aqi: typeof r.aqi === 'number' ? r.aqi : 0
+    }
+    addReading(reading).catch((err) => {
+      console.error('Failed to persist reading:', err)
+    })
+  })
+
+  ipcMain.handle('sensor:sync-pi-db', async (_event, piDbUrl: unknown) => {
+    if (typeof piDbUrl !== 'string') throw new Error('Invalid URL')
+    const parsed = new URL(piDbUrl)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      throw new Error('Invalid protocol')
+    }
+    const response = await net.fetch(piDbUrl, { signal: AbortSignal.timeout(15000) })
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const dbData = await response.arrayBuffer()
+    if (dbData.byteLength > 50 * 1024 * 1024) throw new Error('Database too large')
+    const piReadings = await parsePiDatabase(dbData)
+    await importReadings(piReadings)
+    console.log(`Imported ${piReadings.length} readings from Pi database`)
+    sendToRenderer('sensor:history-updated', null)
+    return piReadings.length
   })
 }
 
@@ -244,20 +235,10 @@ app.whenReady().then(async () => {
     await initStore()
     registerIpcHandlers()
     createWindow()
-    await startDataSource()
 
-    const settings = getSettings()
-    if (settings.piDatabaseUrl) {
-      syncPiDatabase(settings.piDatabaseUrl)
-        .then(async (piReadings) => {
-          await importReadings(piReadings)
-          console.log(`Imported ${piReadings.length} readings from Pi database`)
-          sendToRenderer('sensor:history-updated', null)
-        })
-        .catch((err) => {
-          console.error('Pi database sync failed (continuing with local data):', err)
-        })
-    }
+    await startDataSource()
+    // Pi database sync is now triggered by the renderer using browser fetch
+    // (bypasses macOS local network block on Node.js HTTP)
   } catch (err) {
     console.error('Failed to initialize app:', err)
     app.quit()
@@ -276,7 +257,6 @@ app.whenReady().then(async () => {
 
 app.on('window-all-closed', () => {
   stopMockData()
-  mqttClient.disconnect()
   if (process.platform !== 'darwin') {
     app.quit()
   }

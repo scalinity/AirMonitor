@@ -3,9 +3,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 const api = {
   getHistory: (since: number) => ipcRenderer.invoke('sensor:get-history', since),
   getSettings: () => ipcRenderer.invoke('sensor:get-settings'),
-  getConnectionStatus: () => ipcRenderer.invoke('sensor:get-connection-status'),
   saveSettings: (settings: unknown) => ipcRenderer.invoke('sensor:save-settings', settings),
   setContinuous: (enabled: boolean) => ipcRenderer.invoke('sensor:set-continuous', enabled),
+  persistReading: (reading: unknown) => ipcRenderer.invoke('sensor:persist-reading', reading),
+  syncPiDb: (url: string) => ipcRenderer.invoke('sensor:sync-pi-db', url),
   onSensorData: (callback: (reading: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, reading: unknown) => callback(reading)
     ipcRenderer.on('sensor:data', handler)

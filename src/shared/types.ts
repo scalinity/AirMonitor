@@ -35,9 +35,10 @@ export interface Alert {
 export interface ElectronAPI {
   getHistory: (since: number) => Promise<SensorReading[]>
   getSettings: () => Promise<Settings>
-  getConnectionStatus: () => Promise<ConnectionStatus>
   saveSettings: (settings: Settings) => Promise<void>
   setContinuous: (enabled: boolean) => Promise<void>
+  persistReading: (reading: SensorReading) => Promise<void>
+  syncPiDb: (url: string) => Promise<number>
   onSensorData: (callback: (reading: SensorReading) => void) => () => void
   onConnectionStatus: (callback: (status: ConnectionStatus) => void) => () => void
   onContinuousMode: (callback: (enabled: boolean) => void) => () => void
@@ -45,7 +46,7 @@ export interface ElectronAPI {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  brokerUrl: 'mqtt://raspberrypi.local:1883',
+  brokerUrl: 'ws://raspberrypi.local:9001',
   topic: 'airmonitor/data',
   refreshInterval: 5,
   useMockData: true,

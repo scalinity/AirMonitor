@@ -1,87 +1,53 @@
 import { app } from 'electron'
 import { join } from 'path'
-import { writeFile, unlink } from 'fs/promises'
-import http from 'http'
-import https from 'https'
+import { writeFile, unlink, mkdtemp, rmdir } from 'fs/promises'
 import Database from 'better-sqlite3'
 import { SensorReading } from '../shared/types'
 
-interface PiReadingRow {
-  timestamp: number
-  pm25: number
-  pm10: number
-  aqi: number
-}
+/**
+ * Parse a downloaded Pi SQLite database buffer into sensor readings.
+ * The download itself is done by the renderer (browser fetch) to bypass
+ * macOS local network restrictions on Node.js HTTP.
+ */
+export async function parsePiDatabase(dbData: ArrayBuffer): Promise<SensorReading[]> {
+  const tempDir = await mkdtemp(join(app.getPath('temp'), 'airmonitor-'))
+  const dbPath = join(tempDir, 'pi.db')
+  await writeFile(dbPath, Buffer.from(dbData), { mode: 0o600 })
 
-const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024 // 50 MB
-
-function validateUrl(url: string): URL {
-  const parsed = new URL(url)
-  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
-    throw new Error(`Unsupported protocol: ${parsed.protocol} (only http/https allowed)`)
-  }
-  return parsed
-}
-
-function downloadFile(url: string): Promise<Buffer> {
-  const parsed = validateUrl(url)
-  const httpModule = parsed.protocol === 'https:' ? https : http
-
-  return new Promise((resolve, reject) => {
-    const req = httpModule.get(url, { timeout: 10000 }, (res) => {
-      if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode} downloading Pi database`))
-        res.resume()
-        return
-      }
-
-      let totalBytes = 0
-      const chunks: Buffer[] = []
-
-      res.on('data', (chunk: Buffer) => {
-        totalBytes += chunk.length
-        if (totalBytes > MAX_DOWNLOAD_BYTES) {
-          req.destroy()
-          reject(new Error(`Download exceeded ${MAX_DOWNLOAD_BYTES / 1024 / 1024}MB limit`))
-          return
-        }
-        chunks.push(chunk)
-      })
-      res.on('end', () => resolve(Buffer.concat(chunks)))
-      res.on('error', reject)
-    })
-
-    req.on('error', reject)
-    req.on('timeout', () => {
-      req.destroy()
-      reject(new Error('Download timed out'))
-    })
-  })
-}
-
-export async function syncPiDatabase(piDbUrl: string): Promise<SensorReading[]> {
-  validateUrl(piDbUrl)
-  const dbBuffer = await downloadFile(piDbUrl)
-  const dbPath = join(app.getPath('temp'), 'airmonitor-pi.db')
-  await writeFile(dbPath, dbBuffer)
-
-  const db = new Database(dbPath, { readonly: true })
-
+  let db: InstanceType<typeof Database> | null = null
   try {
-    const rows: PiReadingRow[] = db
-      .prepare('SELECT timestamp, pm25, pm10, aqi FROM readings ORDER BY timestamp ASC')
-      .all() as PiReadingRow[]
+    db = new Database(dbPath, { readonly: true })
 
-    return rows.map((row) => ({
-      timestamp: row.timestamp,
-      pm25: row.pm25,
-      pm10: row.pm10,
-      temperature: 0,
-      humidity: 0,
-      aqi: row.aqi
-    }))
+    // Only import last 30 days — matches data-store.ts retention window
+    const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
+
+    try {
+      return db
+        .prepare(
+          'SELECT timestamp, pm25, pm10, aqi, COALESCE(temperature, 0) as temperature, COALESCE(humidity, 0) as humidity FROM readings WHERE timestamp >= ? ORDER BY timestamp ASC'
+        )
+        .all(thirtyDaysAgo) as SensorReading[]
+    } catch (err) {
+      // Only fall back for missing columns; rethrow other errors
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!msg.includes('no such column')) throw err
+
+      // Fallback for databases without temperature/humidity columns
+      const legacyRows = db
+        .prepare(
+          'SELECT timestamp, pm25, pm10, aqi FROM readings WHERE timestamp >= ? ORDER BY timestamp ASC'
+        )
+        .all(thirtyDaysAgo) as { timestamp: number; pm25: number; pm10: number; aqi: number }[]
+
+      return legacyRows.map((row) => ({
+        ...row,
+        temperature: 0,
+        humidity: 0
+      }))
+    }
   } finally {
-    db.close()
+    if (db) db.close()
     unlink(dbPath).catch(() => {})
+    rmdir(tempDir).catch(() => {})
   }
 }

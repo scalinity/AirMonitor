@@ -1,11 +1,17 @@
 appId: com.airmonitor.app
 productName: AirMonitor
+asarUnpack:
+  - "node_modules/better-sqlite3/**"
 directories:
   buildResources: build
   output: dist
 mac:
   icon: build/icon.icns
   category: public.app-category.utilities
+  extendInfo:
+    NSLocalNetworkUsageDescription: "AirMonitor needs local network access to connect to the air quality sensor on your Raspberry Pi."
+    NSBonjourServices:
+      - "_mqtt._tcp"
   target:
     - target: dir
       arch:

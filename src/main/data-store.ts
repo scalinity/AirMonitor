@@ -71,6 +71,8 @@ export async function importReadings(piReadings: SensorReading[]): Promise<void>
   const piTimestamps = new Set(piReadings.map(r => r.timestamp))
   const localOnly = store.data.readings.filter(r => !piTimestamps.has(r.timestamp))
   store.data.readings = [...piReadings, ...localOnly].sort((a, b) => a.timestamp - b.timestamp)
+  const cutoff = Date.now() - THIRTY_DAYS
+  store.data.readings = store.data.readings.filter(r => r.timestamp >= cutoff)
   await store.write()
 }
 
