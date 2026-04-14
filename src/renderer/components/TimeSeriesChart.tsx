@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react'
+import { useState, useMemo, useEffect, useRef } from 'react'
 import {
   ResponsiveContainer,
   AreaChart,
@@ -16,6 +16,7 @@ interface TimeSeriesChartProps {
 }
 
 type TimeRange = '1h' | '6h' | '24h' | '7d' | '14d' | '30d'
+type MetricView = 'pm' | 'temperature' | 'humidity'
 
 const RANGE_MS: Record<TimeRange, number> = {
   '1h': 60 * 60 * 1000,
@@ -28,13 +29,17 @@ const RANGE_MS: Record<TimeRange, number> = {
 
 const EXTENDED_RANGES = new Set<TimeRange>(['7d', '14d', '30d'])
 
+function celsiusToFahrenheit(c: number): number {
+  return Math.round(c * 9 / 5 * 10 + 320) / 10
+}
+
 // Hourly aggregation bucket size for extended ranges
 const HOUR_MS = 60 * 60 * 1000
 
 function formatTimeLabel(timestamp: number, range: TimeRange): string {
   const date = new Date(timestamp)
   if (EXTENDED_RANGES.has(range)) {
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   }
   return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
@@ -43,13 +48,15 @@ interface ChartPoint {
   timestamp: number
   pm25: number
   pm10: number
+  temperature: number
+  humidity: number
   time: string
 }
 
 function aggregateHourly(readings: SensorReading[], range: TimeRange): ChartPoint[] {
   if (readings.length === 0) return []
 
-  const buckets = new Map<number, { pm25Sum: number; pm10Sum: number; count: number }>()
+  const buckets = new Map<number, { pm25Sum: number; pm10Sum: number; tempSum: number; humSum: number; count: number }>()
 
   for (const r of readings) {
     const bucketKey = Math.floor(r.timestamp / HOUR_MS) * HOUR_MS
@@ -57,9 +64,11 @@ function aggregateHourly(readings: SensorReading[], range: TimeRange): ChartPoin
     if (existing) {
       existing.pm25Sum += r.pm25
       existing.pm10Sum += r.pm10
+      existing.tempSum += r.temperature
+      existing.humSum += r.humidity
       existing.count++
     } else {
-      buckets.set(bucketKey, { pm25Sum: r.pm25, pm10Sum: r.pm10, count: 1 })
+      buckets.set(bucketKey, { pm25Sum: r.pm25, pm10Sum: r.pm10, tempSum: r.temperature, humSum: r.humidity, count: 1 })
     }
   }
 
@@ -69,12 +78,15 @@ function aggregateHourly(readings: SensorReading[], range: TimeRange): ChartPoin
       timestamp: ts,
       pm25: Math.round((bucket.pm25Sum / bucket.count) * 10) / 10,
       pm10: Math.round((bucket.pm10Sum / bucket.count) * 10) / 10,
+      temperature: celsiusToFahrenheit(bucket.tempSum / bucket.count),
+      humidity: Math.round((bucket.humSum / bucket.count) * 10) / 10,
       time: formatTimeLabel(ts, range)
     }))
 }
 
 export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
   const [range, setRange] = useState<TimeRange>('1h')
+  const [metric, setMetric] = useState<MetricView>('pm')
   const [extendedReadings, setExtendedReadings] = useState<SensorReading[]>([])
   const [loading, setLoading] = useState(false)
   const fetchedRangeRef = useRef<TimeRange | null>(null)
@@ -119,7 +131,9 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
     const isExtended = EXTENDED_RANGES.has(range)
     const source = isExtended ? extendedReadings : readings
     const cutoff = Date.now() - RANGE_MS[range]
-    const filtered = source.filter(r => r.timestamp >= cutoff)
+    // Filter by time range; omit bad DHT11 reads only for temp/humidity views
+    const filtered = source.filter(r => r.timestamp >= cutoff &&
+      (metric === 'pm' || !(r.temperature === 0 && r.humidity === 0)))
 
     if (isExtended) {
       return aggregateHourly(filtered, range)
@@ -127,24 +141,56 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
 
     return filtered.map(r => ({
       ...r,
+      temperature: celsiusToFahrenheit(r.temperature),
       time: formatTimeLabel(r.timestamp, range)
     }))
-  }, [readings, extendedReadings, range])
+  }, [readings, extendedReadings, range, metric])
 
   const yMax = useMemo(() => {
     if (filteredData.length === 0) return 10
-    const values = filteredData.map(r => Math.max(r.pm25, r.pm10)).sort((a, b) => a - b)
+    let values: number[]
+    if (metric === 'pm') {
+      values = filteredData.map(r => Math.max(r.pm25, r.pm10))
+    } else if (metric === 'temperature') {
+      values = filteredData.map(r => r.temperature)
+    } else {
+      values = filteredData.map(r => r.humidity)
+    }
+    values.sort((a, b) => a - b)
     const refIndex = values.length > 20
       ? Math.floor(values.length * 0.95)
       : values.length - 1
     const ref = values[refIndex]
-    return Math.max(Math.ceil(ref * 1.5), 2)
-  }, [filteredData])
+    return Math.max(Math.ceil(ref * 1.2), 2)
+  }, [filteredData, metric])
+
+  const yMin = useMemo(() => {
+    if (metric !== 'temperature' || filteredData.length === 0) return 0
+    let min = Infinity
+    for (const r of filteredData) { if (r.temperature < min) min = r.temperature }
+    return Math.max(Math.floor(min - 5), 0)
+  }, [filteredData, metric])
+
+  const metricTitle = metric === 'pm' ? 'Particulate Matter' : metric === 'temperature' ? 'Temperature' : 'Humidity'
+  const yUnit = metric === 'pm' ? '' : metric === 'temperature' ? '°F' : '%'
 
   return (
     <>
       <div className="chart-header">
-        <span className="chart-title">Particulate Matter</span>
+        <div className="chart-header-left">
+          <div className="chart-metric-buttons">
+            {([['pm', 'PM'], ['temperature', 'Temp'], ['humidity', 'Humidity']] as [MetricView, string][]).map(([m, label]) => (
+              <button
+                key={m}
+                className={`chart-range-btn ${metric === m ? 'active' : ''}`}
+                onClick={() => setMetric(m)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <span className="chart-title">{metricTitle}</span>
+        </div>
         <div className="chart-range-buttons">
           {(['1h', '6h', '24h', '7d', '14d', '30d'] as TimeRange[]).map(r => (
             <button
@@ -158,7 +204,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
         </div>
       </div>
       {loading && <div style={{ color: '#7a8494', fontSize: 12, padding: '4px 0' }}>Loading...</div>}
-      <ResponsiveContainer width="100%" height={220}>
+      <ResponsiveContainer width="100%" height={380}>
         <AreaChart data={filteredData}>
           <defs>
             <linearGradient id="gradPm25" x1="0" y1="0" x2="0" y2="1">
@@ -168,6 +214,14 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
             <linearGradient id="gradPm10" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="#4b9fff" stopOpacity={0.2} />
               <stop offset="100%" stopColor="#4b9fff" stopOpacity={0.02} />
+            </linearGradient>
+            <linearGradient id="gradTemp" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#ff8c42" stopOpacity={0.25} />
+              <stop offset="100%" stopColor="#ff8c42" stopOpacity={0.02} />
+            </linearGradient>
+            <linearGradient id="gradHumidity" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="#7c5cfc" stopOpacity={0.25} />
+              <stop offset="100%" stopColor="#7c5cfc" stopOpacity={0.02} />
             </linearGradient>
           </defs>
           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.04)" />
@@ -182,7 +236,8 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
             tick={{ fill: '#7a8494', fontSize: 11, fontFamily: "'DM Mono', monospace" }}
             tickLine={false}
             axisLine={false}
-            domain={[0, yMax]}
+            domain={[yMin, yMax]}
+            unit={yUnit}
           />
           <Tooltip
             contentStyle={{
@@ -197,29 +252,61 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
               fontSize: 12
             }}
           />
-          <Legend wrapperStyle={{ color: '#7a8494', fontSize: 12, fontFamily: "'Outfit', sans-serif" }} />
-          <Area
-            type="monotone"
-            dataKey="pm25"
-            name="PM2.5"
-            stroke="#00d4aa"
-            strokeWidth={2}
-            fill="url(#gradPm25)"
-            dot={false}
-            activeDot={{ r: 5, fill: '#00d4aa', stroke: 'rgba(0,212,170,0.3)', strokeWidth: 6 }}
-            isAnimationActive={false}
-          />
-          <Area
-            type="monotone"
-            dataKey="pm10"
-            name="PM10"
-            stroke="#4b9fff"
-            strokeWidth={2}
-            fill="url(#gradPm10)"
-            dot={false}
-            activeDot={{ r: 5, fill: '#4b9fff', stroke: 'rgba(75,159,255,0.3)', strokeWidth: 6 }}
-            isAnimationActive={false}
-          />
+          {metric === 'pm' && (
+            <Legend wrapperStyle={{ color: '#7a8494', fontSize: 12, fontFamily: "'Outfit', sans-serif" }} />
+          )}
+          {metric === 'pm' && (
+            <>
+              <Area
+                type="monotone"
+                dataKey="pm25"
+                name="PM2.5"
+                stroke="#00d4aa"
+                strokeWidth={2}
+                fill="url(#gradPm25)"
+                dot={false}
+                activeDot={{ r: 5, fill: '#00d4aa', stroke: 'rgba(0,212,170,0.3)', strokeWidth: 6 }}
+                isAnimationActive={false}
+              />
+              <Area
+                type="monotone"
+                dataKey="pm10"
+                name="PM10"
+                stroke="#4b9fff"
+                strokeWidth={2}
+                fill="url(#gradPm10)"
+                dot={false}
+                activeDot={{ r: 5, fill: '#4b9fff', stroke: 'rgba(75,159,255,0.3)', strokeWidth: 6 }}
+                isAnimationActive={false}
+              />
+            </>
+          )}
+          {metric === 'temperature' && (
+            <Area
+              type="monotone"
+              dataKey="temperature"
+              name="Temperature (°F)"
+              stroke="#ff8c42"
+              strokeWidth={2}
+              fill="url(#gradTemp)"
+              dot={false}
+              activeDot={{ r: 5, fill: '#ff8c42', stroke: 'rgba(255,140,66,0.3)', strokeWidth: 6 }}
+              isAnimationActive={false}
+            />
+          )}
+          {metric === 'humidity' && (
+            <Area
+              type="monotone"
+              dataKey="humidity"
+              name="Humidity (%)"
+              stroke="#7c5cfc"
+              strokeWidth={2}
+              fill="url(#gradHumidity)"
+              dot={false}
+              activeDot={{ r: 5, fill: '#7c5cfc', stroke: 'rgba(124,92,252,0.3)', strokeWidth: 6 }}
+              isAnimationActive={false}
+            />
+          )}
         </AreaChart>
       </ResponsiveContainer>
     </>

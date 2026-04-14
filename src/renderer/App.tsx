@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import Header from './components/Header'
 import MetricsRow from './components/MetricsRow'
 import TimeSeriesChart from './components/TimeSeriesChart'
@@ -19,9 +19,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [continuous, setContinuous] = useState(false)
   const { settings, updateSettings } = useSettings()
-  const { latest, readings, connectionStatus, alerts, dismissAlert } = useSensorData(
-    settings?.thresholds
-  )
+  const { latest, readings, connectionStatus, alerts, dismissAlert } = useSensorData(settings)
 
   useEffect(() => {
     const remove = window.api.onContinuousMode((enabled) => setContinuous(enabled))
@@ -50,7 +48,7 @@ export default function App() {
             <AqiGauge aqi={latest?.aqi ?? 0} />
           </div>
         </div>
-        <AlertsPanel alerts={alerts} onDismiss={dismissAlert} />
+        {/* <AlertsPanel alerts={alerts} onDismiss={dismissAlert} /> */}
       </main>
       {showSettings && settings && (
         <SettingsModal

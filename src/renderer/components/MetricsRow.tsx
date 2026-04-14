@@ -51,8 +51,8 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
       />
       <MetricCard
         label="Temperature"
-        value={reading?.temperature ?? null}
-        unit={'\u00b0C'}
+        value={reading?.temperature != null ? Math.round(reading.temperature * 9 / 5 * 10 + 320) / 10 : null}
+        unit={'\u00b0F'}
         level="good"
         trend={computeTrend(readings, 'temperature')}
         index={3}

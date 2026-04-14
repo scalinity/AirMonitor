@@ -335,7 +335,6 @@ body {
   display: grid;
   grid-template-columns: 1fr 300px;
   gap: 20px;
-  min-height: 300px;
 }
 
 @media (max-width: 900px) {
@@ -350,8 +349,10 @@ body {
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 20px 20px 8px;
   box-shadow: var(--shadow-card);
+  display: flex;
+  flex-direction: column;
 }
 
 .chart-header {
@@ -359,6 +360,17 @@ body {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
+}
+
+.chart-header-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.chart-metric-buttons {
+  display: flex;
+  gap: 4px;
 }
 
 .chart-title {
