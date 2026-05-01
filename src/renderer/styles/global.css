@@ -82,15 +82,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 20px;
-  height: 58px;
+  padding: 14px 20px 0;
+  height: 72px;
   background: rgba(15, 21, 32, 0.8);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: var(--glass-border);
   -webkit-app-region: drag;
   flex-shrink: 0;
-  padding-top: env(titlebar-area-height, 0px);
 }
 
 .header-left {

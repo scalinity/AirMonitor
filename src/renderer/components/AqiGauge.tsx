@@ -87,26 +87,16 @@ export default function AqiGauge({ aqi }: AqiGaugeProps) {
             opacity={0.3}
           />
         ))}
-        {segmentArcs.map((arc, i) => {
-          const segStart = SEGMENTS[i - 1]?.max ?? 0
-          const segEnd = SEGMENTS[i].max
-          if (clampedAqi < segStart) return null
-          const effectiveEnd = Math.min(clampedAqi, segEnd)
-          const arcStart = startAngle + (segStart / 500) * totalAngle
-          const arcEnd = startAngle + (effectiveEnd / 500) * totalAngle
-          if (arcEnd - arcStart < 0.5) return null
-          return (
-            <path
-              key={`active-${i}`}
-              d={describeArc(arcStart, arcEnd)}
-              fill="none"
-              stroke={arc.color}
-              strokeWidth="14"
-              strokeLinecap="round"
-              filter="url(#glow)"
-            />
-          )
-        })}
+        {clampedAqi > 0 && (
+          <path
+            d={describeArc(startAngle, needleAngle)}
+            fill="none"
+            stroke={needleColor}
+            strokeWidth="14"
+            strokeLinecap="round"
+            filter="url(#glow)"
+          />
+        )}
         <line
           x1={cx}
           y1={cy}
