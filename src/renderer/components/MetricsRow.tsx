@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import MetricCard from './MetricCard'
 import { SensorReading, AlertLevel } from '../../shared/types'
 import { getAlertLevel } from '../utils/thresholds'
@@ -22,6 +22,18 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
   const pm25Level = reading ? getAlertLevel('pm25', reading.pm25) : 'good' as AlertLevel
   const pm10Level = reading ? getAlertLevel('pm10', reading.pm10) : 'good' as AlertLevel
   const aqiLevel = reading ? getAlertLevel('aqi', reading.aqi) : 'good' as AlertLevel
+
+  // Most recent reading where the DHT11 actually returned data — bad reads
+  // come through as temperature=0 AND humidity=0. PM cards always use the
+  // freshest sample; env cards skip back to the last valid one so users don't
+  // see "32 °F / 0 %" between bad cycles.
+  const latestEnv = useMemo(() => {
+    for (let i = readings.length - 1; i >= 0; i--) {
+      const r = readings[i]
+      if (r.temperature !== 0 || r.humidity !== 0) return r
+    }
+    return null
+  }, [readings])
 
   return (
     <div className="metrics-row">
@@ -51,7 +63,7 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
       />
       <MetricCard
         label="Temperature"
-        value={reading?.temperature != null ? Math.round(reading.temperature * 9 / 5 * 10 + 320) / 10 : null}
+        value={latestEnv ? Math.round(latestEnv.temperature * 9 / 5 * 10 + 320) / 10 : null}
         unit={'\u00b0F'}
         level="good"
         trend={computeTrend(readings, 'temperature')}
@@ -59,7 +71,7 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
       />
       <MetricCard
         label="Humidity"
-        value={reading?.humidity ?? null}
+        value={latestEnv ? latestEnv.humidity : null}
         unit="%"
         level="good"
         trend={computeTrend(readings, 'humidity')}
