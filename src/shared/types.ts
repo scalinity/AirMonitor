@@ -46,11 +46,11 @@ export interface ElectronAPI {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  brokerUrl: 'ws://raspberrypi.local:9001',
+  brokerUrl: 'ws://pi.local:9001',
   topic: 'airmonitor/data',
   refreshInterval: 5,
   useMockData: true,
-  piDatabaseUrl: 'http://192.168.34.17:8080/airmonitor.db',
+  piDatabaseUrl: 'http://pi.local:8080/airmonitor.db',
   thresholds: {
     pm25: 35,
     pm10: 150

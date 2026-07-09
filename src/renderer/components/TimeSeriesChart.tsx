@@ -204,7 +204,8 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
         </div>
       </div>
       {loading && <div style={{ color: '#7a8494', fontSize: 12, padding: '4px 0' }}>Loading...</div>}
-      <ResponsiveContainer width="100%" height={380}>
+      <div className="chart-canvas">
+      <ResponsiveContainer width="100%" height="100%">
         <AreaChart data={filteredData}>
           <defs>
             <linearGradient id="gradPm25" x1="0" y1="0" x2="0" y2="1">
@@ -309,6 +310,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
           )}
         </AreaChart>
       </ResponsiveContainer>
+      </div>
     </>
   )
 }
