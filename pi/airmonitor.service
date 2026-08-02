@@ -6,11 +6,11 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=danny
-ExecStart=/home/danny/airmonitor-venv/bin/python /home/danny/publisher.py --broker localhost --interval 60
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/danny/airmonitor/venv/bin/python /home/danny/airmonitor/src/publisher.py --broker localhost --serial-port /dev/sds011_new --serial-port-old /dev/sds011_old --interval 85
+WorkingDirectory=/home/danny
 Restart=on-failure
 RestartSec=10
-StandardOutput=journal
-StandardError=journal
 
 [Install]
 WantedBy=multi-user.target

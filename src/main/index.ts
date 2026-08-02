@@ -15,7 +15,7 @@ function createWindow(): void {
     height: 800,
     minWidth: 800,
     minHeight: 600,
-    backgroundColor: '#0d1117',
+    backgroundColor: '#080c14',
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -197,6 +197,10 @@ function registerIpcHandlers(): void {
       temperature: typeof r.temperature === 'number' ? r.temperature : 0,
       humidity: typeof r.humidity === 'number' ? r.humidity : 0,
       aqi: typeof r.aqi === 'number' ? r.aqi : 0
+    }
+    if (typeof r.pm25_old === 'number' && typeof r.pm10_old === 'number') {
+      reading.pm25_old = r.pm25_old
+      reading.pm10_old = r.pm10_old
     }
     addReading(reading).catch((err) => {
       console.error('Failed to persist reading:', err)

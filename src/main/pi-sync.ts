@@ -22,11 +22,15 @@ export async function parsePiDatabase(dbData: ArrayBuffer): Promise<SensorReadin
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000
 
     try {
-      return db
+      const rows = db
         .prepare(
-          'SELECT timestamp, pm25, pm10, aqi, COALESCE(temperature, 0) as temperature, COALESCE(humidity, 0) as humidity FROM readings WHERE timestamp >= ? ORDER BY timestamp ASC'
+          'SELECT timestamp, pm25, pm10, aqi, COALESCE(temperature, 0) as temperature, COALESCE(humidity, 0) as humidity, pm25_old, pm10_old FROM readings WHERE timestamp >= ? ORDER BY timestamp ASC'
         )
-        .all(thirtyDaysAgo) as SensorReading[]
+        .all(thirtyDaysAgo) as (SensorReading & { pm25_old: number | null; pm10_old: number | null })[]
+      // SQL NULL → absent optional field
+      return rows.map(({ pm25_old, pm10_old, ...rest }) =>
+        pm25_old != null && pm10_old != null ? { ...rest, pm25_old, pm10_old } : rest
+      )
     } catch (err) {
       // Only fall back for missing columns; rethrow other errors
       const msg = err instanceof Error ? err.message : String(err)

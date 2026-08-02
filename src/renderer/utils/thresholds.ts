@@ -25,11 +25,4 @@ export function getAlertLevel(metric: string, value: number): AlertLevel {
   return 'good'
 }
 
-export const LEVEL_COLORS: Record<AlertLevel, string> = {
-  good: '#3fb950',
-  moderate: '#d29922',
-  unhealthy_sensitive: '#db6d28',
-  unhealthy: '#f85149',
-  very_unhealthy: '#a371f7',
-  hazardous: '#8b0000'
-}
+export { LEVEL_COLORS } from './aqi'

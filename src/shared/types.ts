@@ -5,6 +5,9 @@ export interface SensorReading {
   temperature: number
   humidity: number
   aqi: number
+  // A/B comparison: second (old) SDS011 read at the same moment; absent when not connected
+  pm25_old?: number
+  pm10_old?: number
 }
 
 export type ConnectionStatus = 'connected' | 'disconnected' | 'reconnecting'

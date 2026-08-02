@@ -1,27 +1,47 @@
 import React from 'react'
 import { ConnectionStatus } from '../../shared/types'
+import { formatAge } from '../utils/format'
 
 interface HeaderProps {
   connectionStatus: ConnectionStatus
+  staleSeconds: number | null
   continuous: boolean
   onContinuousToggle: () => void
   onSettingsClick: () => void
 }
 
-const STATUS_LABELS: Record<ConnectionStatus, string> = {
-  connected: 'Connected',
+type DotState = ConnectionStatus | 'stale'
+
+const STATUS_LABELS: Record<DotState, string> = {
+  connected: 'Receiving data',
+  stale: 'Connected — no recent data',
   disconnected: 'Disconnected',
   reconnecting: 'Reconnecting'
 }
 
-export default function Header({ connectionStatus, continuous, onContinuousToggle, onSettingsClick }: HeaderProps) {
+export default function Header({ connectionStatus, staleSeconds, continuous, onContinuousToggle, onSettingsClick }: HeaderProps) {
+  // 3× the expected cadence: ~1s in continuous mode, ~120s duty-cycled
+  const staleAfterS = continuous ? 15 : 360
+  const fresh = staleSeconds != null && staleSeconds < staleAfterS
+
+  // Fresh data wins over transport state — a reading that just arrived proves
+  // the pipeline works even if the socket status is mid-flap
+  const dotState: DotState = fresh
+    ? 'connected'
+    : connectionStatus === 'connected'
+      ? 'stale'
+      : connectionStatus
+
   return (
     <header className="header">
       <div className="header-left">
         <h1>AirMonitor</h1>
-        <div className={`status-dot ${connectionStatus}`} title={STATUS_LABELS[connectionStatus]}>
-          <span className="sr-only">{STATUS_LABELS[connectionStatus]}</span>
+        <div className={`status-dot ${dotState}`} title={STATUS_LABELS[dotState]}>
+          <span className="sr-only">{STATUS_LABELS[dotState]}</span>
         </div>
+        {staleSeconds != null && (
+          <span className="status-age" title="Time since the last reading">{formatAge(staleSeconds)}</span>
+        )}
       </div>
       <div className="header-right">
         <button

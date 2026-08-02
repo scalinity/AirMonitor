@@ -9,6 +9,9 @@ interface UseSensorDataResult {
   connectionStatus: ConnectionStatus
   alerts: Alert[]
   dismissAlert: (id: string) => void
+  // Wall-clock ticked every 5s — lets consumers derive freshness/day boundaries
+  now: number
+  staleSeconds: number | null
 }
 
 const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
@@ -44,7 +47,7 @@ function parseReading(payload: string): SensorReading | null {
       Number.isFinite(data.timestamp) &&
       Math.abs(data.timestamp - now) < 60_000) ? data.timestamp : now
 
-    return {
+    const reading: SensorReading = {
       timestamp,
       pm25: data.pm25,
       pm10: data.pm10,
@@ -52,6 +55,13 @@ function parseReading(payload: string): SensorReading | null {
       humidity: typeof data.humidity === 'number' && Number.isFinite(data.humidity) ? data.humidity : 0,
       aqi: pm25ToAqi(data.pm25)
     }
+    if (typeof data.pm25_old === 'number' && Number.isFinite(data.pm25_old) &&
+        typeof data.pm10_old === 'number' && Number.isFinite(data.pm10_old) &&
+        data.pm25_old >= 0 && data.pm25_old <= 1000 && data.pm10_old >= 0 && data.pm10_old <= 1000) {
+      reading.pm25_old = data.pm25_old
+      reading.pm10_old = data.pm10_old
+    }
+    return reading
   } catch {
     return null
   }
@@ -63,6 +73,7 @@ export function useSensorData(
   const [readings, setReadings] = useState<SensorReading[]>([])
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [alerts, setAlerts] = useState<Alert[]>([])
+  const [now, setNow] = useState(() => Date.now())
   const thresholdsRef = useRef<{ pm25: number; pm10: number }>({ pm25: 35, pm10: 150 })
   const mqttClientRef = useRef<BrowserMqttClient | null>(null)
 
@@ -203,12 +214,19 @@ export function useSensorData(
   }, [settings])
 
   useEffect(() => {
-    if (alerts.length === 0) return
-    const timer = setTimeout(() => {
-      const cutoff = Date.now() - 30000
-      setAlerts((prev) => prev.filter(a => a.timestamp > cutoff))
-    }, 30000)
-    return () => clearTimeout(timer)
+    // Unconditional 5s tick drives freshness display and day-boundary rollover
+    const tick = setInterval(() => setNow(Date.now()), 5000)
+    let expire: ReturnType<typeof setTimeout> | undefined
+    if (alerts.length > 0) {
+      expire = setTimeout(() => {
+        const cutoff = Date.now() - 30000
+        setAlerts((prev) => prev.filter(a => a.timestamp > cutoff))
+      }, 30000)
+    }
+    return () => {
+      clearInterval(tick)
+      if (expire) clearTimeout(expire)
+    }
   }, [alerts])
 
   const dismissAlert = useCallback((id: string) => {
@@ -220,5 +238,7 @@ export function useSensorData(
     [readings]
   )
 
-  return { latest, readings, connectionStatus, alerts, dismissAlert }
+  const staleSeconds = latest ? Math.max(0, Math.round((now - latest.timestamp) / 1000)) : null
+
+  return { latest, readings, connectionStatus, alerts, dismissAlert, now, staleSeconds }
 }

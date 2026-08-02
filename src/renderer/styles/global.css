@@ -1,3 +1,11 @@
+/* Registered so the state-tinted wash can transition smoothly between levels
+   (background-image gradients don't interpolate; a registered property does) */
+@property --state-tint {
+  syntax: '<color>';
+  inherits: true;
+  initial-value: rgba(63, 185, 80, 0.06);
+}
+
 :root {
   --bg-primary: #080c14;
   --bg-secondary: #0f1520;
@@ -10,11 +18,11 @@
   --text-secondary: #7a8494;
   --text-muted: #505868;
   --accent-good: #3fb950;
-  --accent-moderate: #d29922;
-  --accent-unhealthy-sensitive: #db6d28;
-  --accent-unhealthy: #f85149;
+  --accent-moderate: #f2d160;
+  --accent-unhealthy-sensitive: #e6802f;
+  --accent-unhealthy: #d92f2f;
   --accent-very-unhealthy: #a371f7;
-  --accent-hazardous: #8b0000;
+  --accent-hazardous: #b8434f;
   --accent-blue: #4b9fff;
   --accent-cyan: #00d4aa;
   --radius-sm: 8px;
@@ -42,10 +50,6 @@
 body {
   font-family: var(--font-display);
   background: var(--bg-primary);
-  background-image:
-    radial-gradient(ellipse 80% 60% at 10% 90%, rgba(0, 212, 170, 0.06) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 80% at 90% 10%, rgba(75, 159, 255, 0.06) 0%, transparent 60%),
-    radial-gradient(ellipse 50% 50% at 50% 50%, rgba(163, 113, 247, 0.03) 0%, transparent 60%);
   color: var(--text-primary);
   overflow: hidden;
   height: 100vh;
@@ -62,6 +66,9 @@ body {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  /* The room's air, ambiently: hue follows the current AQI level */
+  background-image: radial-gradient(ellipse 80% 55% at 50% 0%, var(--state-tint) 0%, transparent 65%);
+  transition: --state-tint 800ms ease;
 }
 
 /* Screen reader only */
@@ -114,7 +121,6 @@ body {
 .status-dot.connected {
   background: var(--accent-good);
   box-shadow: 0 0 8px var(--accent-good), 0 0 16px rgba(63, 185, 80, 0.3);
-  animation: pulse-glow 2s infinite;
 }
 
 .status-dot.disconnected {
@@ -122,10 +128,22 @@ body {
   box-shadow: 0 0 8px var(--accent-unhealthy);
 }
 
+.status-dot.stale {
+  background: var(--accent-moderate);
+  box-shadow: 0 0 8px rgba(242, 209, 96, 0.5);
+}
+
 .status-dot.reconnecting {
   background: var(--accent-moderate);
   box-shadow: 0 0 8px var(--accent-moderate);
   animation: pulse-glow 1s infinite;
+}
+
+.status-age {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
 }
 
 @keyframes pulse-glow {
@@ -198,10 +216,6 @@ body {
   color: var(--accent-good);
 }
 
-.continuous-btn.active .continuous-label {
-  animation: pulse-glow 1.5s infinite;
-}
-
 .continuous-label {
   letter-spacing: 0.3px;
 }
@@ -242,7 +256,7 @@ body {
 /* Metrics Row */
 .metrics-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 14px;
 }
 
@@ -270,6 +284,8 @@ body {
   box-shadow: var(--shadow-card);
   transition: transform var(--transition-fast), box-shadow var(--transition-fast);
   animation: fadeSlideUp 0.4s ease backwards;
+  /* Constant height whether or not the A/B secondary row is present */
+  min-height: 172px;
 }
 
 .metric-card:hover {
@@ -309,39 +325,82 @@ body {
 }
 
 .metric-card.level-good .metric-card-number { text-shadow: 0 0 20px rgba(63, 185, 80, 0.3); }
-.metric-card.level-moderate .metric-card-number { text-shadow: 0 0 20px rgba(210, 153, 34, 0.3); }
-.metric-card.level-unhealthy_sensitive .metric-card-number { text-shadow: 0 0 20px rgba(219, 109, 40, 0.3); }
-.metric-card.level-unhealthy .metric-card-number { text-shadow: 0 0 20px rgba(248, 81, 73, 0.3); }
+.metric-card.level-moderate .metric-card-number { text-shadow: 0 0 20px rgba(242, 209, 96, 0.3); }
+.metric-card.level-unhealthy_sensitive .metric-card-number { text-shadow: 0 0 20px rgba(230, 128, 47, 0.3); }
+.metric-card.level-unhealthy .metric-card-number { text-shadow: 0 0 20px rgba(217, 47, 47, 0.3); }
 .metric-card.level-very_unhealthy .metric-card-number { text-shadow: 0 0 20px rgba(163, 113, 247, 0.3); }
-.metric-card.level-hazardous .metric-card-number { text-shadow: 0 0 20px rgba(139, 0, 0, 0.3); }
+.metric-card.level-hazardous .metric-card-number { text-shadow: 0 0 20px rgba(184, 67, 79, 0.3); }
 
 .metric-card-unit {
   font-size: 14px;
   color: var(--text-secondary);
 }
 
-.metric-card-trend {
-  font-size: 14px;
+.metric-sparkline {
+  display: block;
+  width: 100%;
+  height: 28px;
+  margin-top: 10px;
+  opacity: 0.7;
+}
+
+.metric-card-delta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
   margin-top: 6px;
 }
 
-.metric-card-trend.up { color: var(--accent-unhealthy); }
-.metric-card-trend.down { color: var(--accent-good); }
-.metric-card-trend.stable { color: var(--text-muted); }
+/* Second-channel reading (A/B sensor comparison) */
+.metric-card-secondary {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.metric-card-secondary-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.metric-card-secondary-value {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+}
+
+.metric-card-secondary-delta {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.metric-card-secondary-delta.diverged { color: var(--accent-moderate); }
 
 /* Charts Row */
 .charts-row {
   display: grid;
-  grid-template-columns: 1fr 300px;
+  grid-template-columns: 1fr 320px;
   grid-template-rows: 1fr;
   flex: 1;
-  min-height: 0;
+  min-height: 360px;
   gap: 20px;
 }
 
 @media (max-width: 900px) {
   .charts-row {
     grid-template-columns: 1fr;
+    /* Stacked: size rows by content and let the dashboard scroll instead of
+       squeezing the panel into the leftover viewport */
+    grid-template-rows: none;
+    flex: none;
   }
 }
 
@@ -361,12 +420,34 @@ body {
 .chart-canvas {
   flex: 1;
   min-height: 0;
+  position: relative;
+}
+
+/* After the base rule so the same-specificity min-height wins in the cascade */
+@media (max-width: 900px) {
+  .chart-container {
+    min-height: 360px;
+  }
+}
+
+.chart-notice {
+  position: absolute;
+  top: 8px;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-secondary);
+  pointer-events: none;
+  z-index: 1;
 }
 
 .chart-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  row-gap: 8px;
   margin-bottom: 16px;
 }
 
@@ -376,14 +457,27 @@ body {
   gap: 12px;
 }
 
-.chart-metric-buttons {
-  display: flex;
-  gap: 4px;
+.chart-segmented {
+  display: inline-flex;
+  border: var(--glass-border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
 }
 
-.chart-title {
-  font-size: 14px;
-  font-weight: 600;
+.chart-segmented .chart-range-btn {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.chart-segmented .chart-range-btn + .chart-range-btn {
+  border-left: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Ring drawn inset so the segmented control's overflow:hidden can't clip it */
+.chart-segmented .chart-range-btn:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--accent-cyan);
 }
 
 .chart-range-buttons {
@@ -420,25 +514,152 @@ body {
   border-color: rgba(0, 212, 170, 0.3);
 }
 
-/* Gauge Container */
-.gauge-container {
+/* Air State Panel (verdict column) */
+.air-state-panel {
   background: rgba(255, 255, 255, 0.03);
   border: var(--glass-border);
   backdrop-filter: var(--glass-blur);
   -webkit-backdrop-filter: var(--glass-blur);
   border-radius: var(--radius-md);
-  padding: 20px;
+  padding: 18px;
   box-shadow: var(--shadow-card);
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  gap: 14px;
+  min-height: 0;
+  overflow-y: auto;
+  animation: fadeSlideUp 0.4s ease backwards;
+  animation-delay: 240ms;
 }
 
-.gauge-title {
-  font-size: 14px;
-  font-weight: 600;
-  margin-bottom: 12px;
+.state-word {
+  font-family: var(--font-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.1;
+  letter-spacing: -0.4px;
+  animation: fadeSlideUp 0.4s ease backwards;
+  animation-delay: 360ms;
+}
+
+.state-meta {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.aqi-band-bar {
+  position: relative;
+  display: flex;
+  gap: 2px;
+  height: 6px;
+  margin-top: 12px;
+}
+
+.aqi-band-seg {
+  flex: 1;
+  border-radius: 3px;
+}
+
+.aqi-band-marker {
+  position: absolute;
+  top: -3px;
+  width: 2px;
+  height: 12px;
+  border-radius: 1px;
+  background: var(--text-primary);
+  transition: left var(--transition-fast);
+}
+
+.state-freshness {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 8px;
+}
+
+.panel-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+/* Rhythm strip: 7 days x 24 hours of PM2.5 */
+.rhythm-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 12px;
+}
+
+.rhythm-grid {
+  display: grid;
+  grid-template-columns: 26px repeat(24, 1fr);
+  grid-auto-rows: 10px;
+  gap: 2px;
+}
+
+.rhythm-day-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 10px;
+  color: var(--text-muted);
+}
+
+.rhythm-day-label.today {
+  color: var(--text-secondary);
+}
+
+.rhythm-cell {
+  border-radius: 2px;
+}
+
+.rhythm-cell.empty {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.05);
+}
+
+.rhythm-hour-label {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 10px;
+  color: var(--text-muted);
+}
+
+/* Today facts */
+.panel-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  padding-top: 12px;
+}
+
+.panel-fact-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.panel-fact-label {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  flex-shrink: 0;
+}
+
+.panel-fact-value {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-secondary);
+  text-align: right;
 }
 
 /* Alerts Panel */

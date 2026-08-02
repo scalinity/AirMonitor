@@ -37,11 +37,35 @@ export function aqiToLabel(aqi: number): string {
   return 'Hazardous'
 }
 
+// Single source for level colors. Validated on the app surface (#080c14):
+// adjacent-pair CVD ΔE ≥ 8, normal-vision ΔE ≥ 15, contrast ≥ 3:1.
+export const LEVEL_COLORS: Record<AlertLevel, string> = {
+  good: '#3fb950',
+  moderate: '#f2d160',
+  unhealthy_sensitive: '#e6802f',
+  unhealthy: '#d92f2f',
+  very_unhealthy: '#a371f7',
+  hazardous: '#b8434f'
+}
+
+export const LEVEL_RGB: Record<AlertLevel, string> = {
+  good: '63, 185, 80',
+  moderate: '242, 209, 96',
+  unhealthy_sensitive: '230, 128, 47',
+  unhealthy: '217, 47, 47',
+  very_unhealthy: '163, 113, 247',
+  hazardous: '184, 67, 79'
+}
+
+export const AQI_BANDS: { lo: number; hi: number; level: AlertLevel }[] = [
+  { lo: 0, hi: 50, level: 'good' },
+  { lo: 51, hi: 100, level: 'moderate' },
+  { lo: 101, hi: 150, level: 'unhealthy_sensitive' },
+  { lo: 151, hi: 200, level: 'unhealthy' },
+  { lo: 201, hi: 300, level: 'very_unhealthy' },
+  { lo: 301, hi: 500, level: 'hazardous' }
+]
+
 export function aqiToColor(aqi: number): string {
-  if (aqi <= 50) return '#3fb950'
-  if (aqi <= 100) return '#d29922'
-  if (aqi <= 150) return '#db6d28'
-  if (aqi <= 200) return '#f85149'
-  if (aqi <= 300) return '#a371f7'
-  return '#8b0000'
+  return LEVEL_COLORS[aqiToLevel(aqi)]
 }

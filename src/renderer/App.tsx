@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, CSSProperties } from 'react'
 import Header from './components/Header'
 import MetricsRow from './components/MetricsRow'
 import TimeSeriesChart from './components/TimeSeriesChart'
-import AqiGauge from './components/AqiGauge'
+import AirStatePanel from './components/AirStatePanel'
 import AlertsPanel from './components/AlertsPanel'
 import SettingsModal from './components/SettingsModal'
 import { useSensorData } from './hooks/useSensorData'
 import { useSettings } from './hooks/useSettings'
+import { aqiToLevel, LEVEL_RGB } from './utils/aqi'
 import { ElectronAPI } from '../shared/types'
 
 declare global {
@@ -19,7 +20,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [continuous, setContinuous] = useState(false)
   const { settings, updateSettings } = useSettings()
-  const { latest, readings, connectionStatus, alerts, dismissAlert } = useSensorData(settings)
+  const { latest, readings, connectionStatus, alerts, dismissAlert, now, staleSeconds } = useSensorData(settings)
 
   useEffect(() => {
     const remove = window.api.onContinuousMode((enabled) => setContinuous(enabled))
@@ -30,10 +31,15 @@ export default function App() {
     window.api.setContinuous(!continuous)
   }, [continuous])
 
+  // The app's ambient wash follows the current air state
+  const tintLevel = latest ? aqiToLevel(latest.aqi) : 'good'
+  const appStyle = { '--state-tint': `rgba(${LEVEL_RGB[tintLevel]}, 0.06)` } as CSSProperties
+
   return (
-    <div className="app">
+    <div className="app" style={appStyle}>
       <Header
         connectionStatus={connectionStatus}
+        staleSeconds={staleSeconds}
         continuous={continuous}
         onContinuousToggle={handleContinuousToggle}
         onSettingsClick={() => setShowSettings(true)}
@@ -44,9 +50,7 @@ export default function App() {
           <div className="chart-container">
             <TimeSeriesChart readings={readings} />
           </div>
-          <div className="gauge-container">
-            <AqiGauge aqi={latest?.aqi ?? 0} />
-          </div>
+          <AirStatePanel latest={latest} readings={readings} staleSeconds={staleSeconds} now={now} />
         </div>
         {/* <AlertsPanel alerts={alerts} onDismiss={dismissAlert} /> */}
       </main>

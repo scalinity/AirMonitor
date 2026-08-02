@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 AirMonitor — Raspberry Pi MQTT Publisher
-Reads SDS011 air quality sensor and DHT11 temperature/humidity sensor,
+Reads SDS011 air quality sensor and DHT22 temperature/humidity sensor,
 then publishes data via MQTT.
 Supports both query mode (interval-based) and continuous mode
 (active reporting ~1 reading/second).
@@ -81,7 +81,15 @@ def init_db() -> sqlite3.Connection:
             conn.execute("ALTER TABLE readings ADD COLUMN temperature REAL DEFAULT 0")
         if "humidity" not in existing:
             conn.execute("ALTER TABLE readings ADD COLUMN humidity REAL DEFAULT 0")
+        # A/B comparison: second (old) SDS011 read simultaneously; NULL when absent
+        if "pm25_old" not in existing:
+            conn.execute("ALTER TABLE readings ADD COLUMN pm25_old REAL")
+        if "pm10_old" not in existing:
+            conn.execute("ALTER TABLE readings ADD COLUMN pm10_old REAL")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_timestamp ON readings(timestamp)")
+        # Dedup guard: this backup write + the MQTT logger must not double-insert
+        # the same reading. Enforced by a unique timestamp (INSERT OR IGNORE dedupes).
+        conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_timestamp_unique ON readings(timestamp)")
         conn.commit()
     except Exception:
         conn.close()
@@ -93,10 +101,11 @@ def write_reading(conn: sqlite3.Connection, data: dict) -> None:
     """Persist reading directly to SQLite. Non-fatal on error."""
     try:
         conn.execute(
-            "INSERT OR IGNORE INTO readings (timestamp, pm25, pm10, aqi, temperature, humidity) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO readings (timestamp, pm25, pm10, aqi, temperature, humidity, pm25_old, pm10_old) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             (data["timestamp"], data["pm25"], data["pm10"], data["aqi"],
-             data["temperature"], data["humidity"]),
+             data["temperature"], data["humidity"],
+             data.get("pm25_old"), data.get("pm10_old")),
         )
         conn.commit()
     except Exception as e:
@@ -120,9 +129,10 @@ def pm25_to_aqi(pm25: float) -> int:
     return 500 if truncated > 500.4 else 0
 
 
-def build_payload(pm25: float, pm10: float, temperature: float, humidity: float) -> dict:
-    """Build a sensor reading payload."""
-    return {
+def build_payload(pm25: float, pm10: float, temperature: float, humidity: float,
+                  pm25_old: float | None = None, pm10_old: float | None = None) -> dict:
+    """Build a sensor reading payload. Old-sensor fields only present when read."""
+    payload = {
         "timestamp": int(time.time() * 1000),
         "pm25": pm25,
         "pm10": pm10,
@@ -130,13 +140,19 @@ def build_payload(pm25: float, pm10: float, temperature: float, humidity: float)
         "humidity": humidity,
         "aqi": pm25_to_aqi(pm25),
     }
+    if pm25_old is not None and pm10_old is not None:
+        payload["pm25_old"] = pm25_old
+        payload["pm10_old"] = pm10_old
+    return payload
 
 
 def publish_reading(client: mqtt.Client, topic: str, data: dict) -> None:
     """Publish a reading to MQTT."""
     client.publish(topic, json.dumps(data))
+    old = (f", old PM2.5={data['pm25_old']}, old PM10={data['pm10_old']}"
+           if "pm25_old" in data else "")
     print(f"Published: PM2.5={data['pm25']}, PM10={data['pm10']}, AQI={data['aqi']}, "
-          f"Temp={data['temperature']}°C, Humidity={data['humidity']}%")
+          f"Temp={data['temperature']}°C, Humidity={data['humidity']}%{old}")
 
 
 def read_sensor(serial_port: str, warmup: bool = True) -> tuple[float, float]:
@@ -163,8 +179,57 @@ def read_sensor(serial_port: str, warmup: bool = True) -> tuple[float, float]:
                 pass
 
 
+def read_sensor_pair(serial_port: str, serial_port_old: str,
+                     warmup: bool = True) -> tuple[float, float, float | None, float | None]:
+    """Read both SDS011 sensors near-simultaneously for A/B comparison:
+    wake both, share one warmup, query back-to-back. Returns
+    (pm25, pm10, pm25_old, pm10_old); old values are None if the old
+    sensor is missing or fails — the primary reading is never blocked."""
+    if SDS011QueryReader is None:
+        import random
+        pm25 = round(random.uniform(5, 50), 1)
+        pm10 = round(random.uniform(10, 80), 1)
+        return pm25, pm10, round(pm25 * 0.85, 1), round(pm10 * 0.85, 1)
+
+    with port_lock:
+        reader = SDS011QueryReader(serial_port)
+        reader_old = None
+        try:
+            reader_old = SDS011QueryReader(serial_port_old)
+        except Exception as e:
+            print(f"Old sensor open failed (continuing with new only): {e}")
+        try:
+            reader.wake()
+            if reader_old is not None:
+                try:
+                    reader_old.wake()
+                except Exception as e:
+                    print(f"Old sensor wake failed (continuing with new only): {e}")
+                    reader_old = None
+            if warmup:
+                time.sleep(SDS011_WARMUP_SECONDS)
+            else:
+                time.sleep(1)
+            result = reader.query()
+            pm25_old = pm10_old = None
+            if reader_old is not None:
+                try:
+                    result_old = reader_old.query()
+                    pm25_old, pm10_old = result_old.pm25, result_old.pm10
+                except Exception as e:
+                    print(f"Old sensor query failed (continuing with new only): {e}")
+            return result.pm25, result.pm10, pm25_old, pm10_old
+        finally:
+            for r in (reader, reader_old):
+                if r is not None:
+                    try:
+                        r.sleep()
+                    except Exception:
+                        pass
+
+
 def read_dht() -> tuple[float, float]:
-    """Read temperature and humidity from DHT11.
+    """Read temperature and humidity from DHT22.
     Returns (temperature_c, humidity_percent).
     Falls back to last known values on failure, or (0, 0) if never read."""
     global last_temperature, last_humidity
@@ -182,17 +247,17 @@ def read_dht() -> tuple[float, float]:
             temperature = dht_device.temperature
             humidity = dht_device.humidity
             if temperature is not None and humidity is not None:
-                # DHT11 sometimes returns 0/0 on failed reads — treat as bad data
+                # DHT22 sometimes returns 0/0 on failed reads — treat as bad data
                 if temperature == 0 and humidity == 0:
                     continue
                 last_temperature = float(temperature)
                 last_humidity = float(humidity)
                 return (last_temperature, last_humidity)
         except RuntimeError:
-            # DHT11 frequently throws RuntimeError on bad reads
+            # DHT22 frequently throws RuntimeError on bad reads
             time.sleep(DHT_RETRY_DELAY)
         except Exception as e:
-            print(f"DHT11 error: {e}")
+            print(f"DHT22 error: {e}")
             break
 
     # All retries failed — return last known or zeros
@@ -240,27 +305,29 @@ def main():
     parser.add_argument("--command-topic", default="airmonitor/command", help="MQTT command topic")
     parser.add_argument("--interval", type=int, default=60, help="Reading interval in seconds (query mode)")
     parser.add_argument("--serial-port", default="/dev/ttyUSB0", help="SDS011 serial port")
+    parser.add_argument("--serial-port-old", default="",
+                        help="second SDS011 (old sensor) for A/B comparison; empty disables")
     parser.add_argument("--continuous", action="store_true", help="Start in continuous mode")
-    parser.add_argument("--dht-pin", default="D17", help="DHT11 GPIO pin (board name, e.g. D4, D17)")
+    parser.add_argument("--dht-pin", default="D17", help="DHT22 GPIO pin (board name, e.g. D4, D17)")
     args = parser.parse_args()
 
     reading_interval = args.interval
     if args.continuous:
         continuous_mode = True
 
-    # Initialize DHT11 sensor
+    # Initialize DHT22 sensor
     if adafruit_dht is not None and board is not None:
         try:
             if not re_mod.match(r'^D\d+$', args.dht_pin):
                 raise ValueError(f"Invalid pin name '{args.dht_pin}' — expected format: D4, D17, etc.")
             pin = getattr(board, args.dht_pin)
-            dht_device = adafruit_dht.DHT11(pin, use_pulseio=False)
-            print(f"DHT11 initialized on pin {args.dht_pin}")
+            dht_device = adafruit_dht.DHT22(pin, use_pulseio=False)
+            print(f"DHT22 initialized on pin {args.dht_pin}")
         except Exception as e:
-            print(f"DHT11 init failed (continuing without): {e}")
+            print(f"DHT22 init failed (continuing without): {e}")
             dht_device = None
     else:
-        print("DHT11 library not available — temperature/humidity will be 0")
+        print("DHT22 library not available — temperature/humidity will be 0")
 
     db = init_db()
     os.chmod(DB_PATH, 0o600)
@@ -288,25 +355,42 @@ def main():
             if is_continuous:
                 # Continuous: read as fast as possible (no warmup, ~1s cycle)
                 try:
-                    pm25, pm10 = read_sensor(args.serial_port, warmup=False)
+                    if args.serial_port_old:
+                        pm25, pm10, pm25_old, pm10_old = read_sensor_pair(
+                            args.serial_port, args.serial_port_old, warmup=False)
+                    else:
+                        pm25, pm10 = read_sensor(args.serial_port, warmup=False)
+                        pm25_old = pm10_old = None
                     dht_counter += 1
                     if dht_counter % DHT_READ_EVERY_N == 0 or last_temperature is None:
                         temperature, humidity = read_dht()
                     else:
                         temperature = last_temperature if last_temperature is not None else 0
                         humidity = last_humidity if last_humidity is not None else 0
-                    data = build_payload(pm25, pm10, temperature, humidity)
+                    data = build_payload(pm25, pm10, temperature, humidity, pm25_old, pm10_old)
                     publish_reading(client, args.topic, data)
                     write_reading(db, data)
                 except Exception as e:
                     print(f"Sensor read error: {e}")
                     time.sleep(1)
             else:
-                # Query mode: read with warmup, then sleep for interval
+                # Query mode: read with warmup, then sleep for interval.
+                # PM read is isolated so a missing/failed SDS011 still lets the
+                # DHT22 temp/humidity reading publish (PM falls back to 0).
                 try:
-                    pm25, pm10 = read_sensor(args.serial_port, warmup=True)
+                    if args.serial_port_old:
+                        pm25, pm10, pm25_old, pm10_old = read_sensor_pair(
+                            args.serial_port, args.serial_port_old, warmup=True)
+                    else:
+                        pm25, pm10 = read_sensor(args.serial_port, warmup=True)
+                        pm25_old = pm10_old = None
+                except Exception as e:
+                    print(f"PM sensor read error (continuing with temp/humidity): {e}")
+                    pm25, pm10 = 0, 0
+                    pm25_old = pm10_old = None
+                try:
                     temperature, humidity = read_dht()
-                    data = build_payload(pm25, pm10, temperature, humidity)
+                    data = build_payload(pm25, pm10, temperature, humidity, pm25_old, pm10_old)
                     publish_reading(client, args.topic, data)
                     write_reading(db, data)
                 except Exception as e:
