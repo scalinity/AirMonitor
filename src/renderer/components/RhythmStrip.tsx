@@ -3,6 +3,7 @@ import { SensorReading } from '../../shared/types'
 import { getAlertLevel } from '../utils/thresholds'
 import { LEVEL_COLORS } from '../utils/aqi'
 import { startOfLocalDay } from '../utils/format'
+import { combinedPm } from '../utils/calibration'
 
 interface RhythmStripProps {
   readings: SensorReading[]
@@ -19,14 +20,21 @@ function hourLabel(h: number): string {
 }
 
 export default function RhythmStrip({ readings, now }: RhythmStripProps) {
-  // One-shot fetch of the six days before today; today's row derives live from
-  // the readings prop. A useState initializer instead of an effect: the setter
-  // is a no-op if the component is gone, and StrictMode's dev double-invoke
-  // just repeats an idempotent read.
+  // Fetch the six days before today; today's row derives live from the
+  // readings prop. A useState initializer instead of an effect: the setter is
+  // a no-op if the component is gone, and StrictMode's dev double-invoke just
+  // repeats an idempotent read. Re-fetches whenever a Pi sync lands — on the
+  // first launch after time away the local store is stale and the sync arrives
+  // seconds after this initial read. The subscription lives for the app's
+  // lifetime, matching this component's.
   const [pastRows, setPastRows] = useState<SensorReading[] | null>(() => {
-    window.api.getHistory(startOfLocalDay(Date.now()) - 6 * DAY_MS)
-      .then(rows => setPastRows(rows))
-      .catch(() => setPastRows([]))
+    const fetchPast = () => {
+      window.api.getHistory(startOfLocalDay(Date.now()) - 6 * DAY_MS)
+        .then(rows => setPastRows(rows))
+        .catch(() => setPastRows([]))
+    }
+    fetchPast()
+    window.api.onHistoryUpdated(fetchPast)
     return null
   })
 
@@ -52,7 +60,7 @@ export default function RhythmStrip({ readings, now }: RhythmStripProps) {
       const dayIdx = indexByStart.get(new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime())
       if (dayIdx === undefined) continue
       const h = d.getHours()
-      sums[dayIdx][h] += r.pm25
+      sums[dayIdx][h] += combinedPm('pm25', r)
       counts[dayIdx][h]++
     }
 

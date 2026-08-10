@@ -1,7 +1,8 @@
 import React, { useMemo } from 'react'
 import { SensorReading } from '../../shared/types'
-import { aqiToLevel, aqiToLabel, LEVEL_COLORS, LEVEL_RGB, AQI_BANDS } from '../utils/aqi'
+import { aqiToLevel, aqiToLabel, pm25ToAqi, LEVEL_COLORS, LEVEL_RGB, AQI_BANDS } from '../utils/aqi'
 import { formatAge, startOfLocalDay } from '../utils/format'
+import { calibrateOld, combinedPm } from '../utils/calibration'
 import RhythmStrip from './RhythmStrip'
 
 interface AirStatePanelProps {
@@ -17,12 +18,14 @@ function shortLabel(aqi: number): string {
 }
 
 export default function AirStatePanel({ latest, readings, staleSeconds, now }: AirStatePanelProps) {
-  const level = latest ? aqiToLevel(latest.aqi) : null
+  // Displayed AQI derives from the combined (both-sensor) PM2.5 value
+  const displayAqi = latest ? pm25ToAqi(combinedPm('pm25', latest)) : null
+  const level = displayAqi !== null ? aqiToLevel(displayAqi) : null
 
   // Marker position: equal-width segments, interpolated within the active band
   let markerLeft: number | null = null
-  if (latest) {
-    const aqi = Math.min(latest.aqi, 500)
+  if (displayAqi !== null) {
+    const aqi = Math.min(displayAqi, 500)
     let idx = AQI_BANDS.findIndex(b => aqi <= b.hi)
     if (idx === -1) idx = AQI_BANDS.length - 1
     const band = AQI_BANDS[idx]
@@ -40,26 +43,28 @@ export default function AirStatePanel({ latest, readings, staleSeconds, now }: A
     let peak = -Infinity
     let peakTs = 0
     for (const r of rows) {
-      sum += r.pm25
-      if (r.pm25 > peak) {
-        peak = r.pm25
+      const v = combinedPm('pm25', r)
+      sum += v
+      if (v > peak) {
+        peak = v
         peakTs = r.timestamp
       }
     }
 
+    // Residual disagreement after calibration — the drift signal
     const pairs = rows.filter(r => r.pm25_old != null)
     let ab = 'collecting pairs…'
     if (pairs.length > 0) {
       let newSum = 0
-      let oldSum = 0
+      let calSum = 0
       for (const p of pairs) {
         newSum += p.pm25
-        oldSum += p.pm25_old as number
+        calSum += calibrateOld('pm25', p.pm25_old as number)
       }
       const meanNew = newSum / pairs.length
       if (meanNew > 0) {
-        const pct = ((oldSum / pairs.length - meanNew) / meanNew) * 100
-        ab = `old ${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(0)}% · ${pairs.length} pairs`
+        const pct = ((calSum / pairs.length - meanNew) / meanNew) * 100
+        ab = `cal ${pct >= 0 ? '+' : '−'}${Math.abs(pct).toFixed(0)}% · ${pairs.length} pairs`
       } else {
         ab = `${pairs.length} pairs`
       }
@@ -77,9 +82,9 @@ export default function AirStatePanel({ latest, readings, staleSeconds, now }: A
     <div className="air-state-panel">
       <div className="state-block">
         <div className="state-word" style={{ color: level ? LEVEL_COLORS[level] : 'var(--text-muted)' }}>
-          {latest ? shortLabel(latest.aqi) : '—'}
+          {displayAqi !== null ? shortLabel(displayAqi) : '—'}
         </div>
-        <div className="state-meta">{latest ? `AQI ${latest.aqi} · PM2.5` : 'waiting for data'}</div>
+        <div className="state-meta">{displayAqi !== null ? `AQI ${displayAqi} · PM2.5` : 'waiting for data'}</div>
         <div className="aqi-band-bar">
           {AQI_BANDS.map(b => (
             <div

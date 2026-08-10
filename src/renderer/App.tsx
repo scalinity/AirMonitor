@@ -7,7 +7,8 @@ import AlertsPanel from './components/AlertsPanel'
 import SettingsModal from './components/SettingsModal'
 import { useSensorData } from './hooks/useSensorData'
 import { useSettings } from './hooks/useSettings'
-import { aqiToLevel, LEVEL_RGB } from './utils/aqi'
+import { aqiToLevel, pm25ToAqi, LEVEL_RGB } from './utils/aqi'
+import { combinedPm } from './utils/calibration'
 import { ElectronAPI } from '../shared/types'
 
 declare global {
@@ -31,8 +32,8 @@ export default function App() {
     window.api.setContinuous(!continuous)
   }, [continuous])
 
-  // The app's ambient wash follows the current air state
-  const tintLevel = latest ? aqiToLevel(latest.aqi) : 'good'
+  // The app's ambient wash follows the current air state (combined-sensor basis)
+  const tintLevel = latest ? aqiToLevel(pm25ToAqi(combinedPm('pm25', latest))) : 'good'
   const appStyle = { '--state-tint': `rgba(${LEVEL_RGB[tintLevel]}, 0.06)` } as CSSProperties
 
   return (

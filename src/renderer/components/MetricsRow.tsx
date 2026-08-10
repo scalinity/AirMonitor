@@ -2,6 +2,7 @@ import React, { useMemo } from 'react'
 import MetricCard from './MetricCard'
 import { SensorReading, AlertLevel } from '../../shared/types'
 import { getAlertLevel } from '../utils/thresholds'
+import { calibrateOld, combinedPm } from '../utils/calibration'
 
 interface MetricsRowProps {
   reading: SensorReading | null
@@ -23,9 +24,11 @@ function toFahrenheit(c: number): number {
   return Math.round(c * 9 / 5 * 10 + 320) / 10
 }
 
+// Delta of the displayed value over ~10 minutes; accessor returns the value
+// in display scale (combined PM, °F temperature)
 function computeDelta(
   readings: SensorReading[],
-  key: 'pm25' | 'pm10' | 'temperature' | 'humidity'
+  get: (r: SensorReading) => number
 ): { value: number; spanMin: number } | null {
   if (readings.length < 2) return null
   const tenMinAgo = Date.now() - 10 * 60 * 1000
@@ -34,14 +37,19 @@ function computeDelta(
   const spanMin = Math.round((latest.timestamp - past.timestamp) / 60000)
   // Under 2 minutes of separation a delta is mostly sensor noise
   if (spanMin < 2) return null
-  let value = latest[key] - past[key]
-  if (key === 'temperature') value = value * 9 / 5
-  return { value, spanMin }
+  return { value: get(latest) - get(past), spanMin }
 }
 
+const getPm25 = (r: SensorReading) => combinedPm('pm25', r)
+const getPm10 = (r: SensorReading) => combinedPm('pm10', r)
+const getTempF = (r: SensorReading) => toFahrenheit(r.temperature)
+const getHumidity = (r: SensorReading) => r.humidity
+
 export default function MetricsRow({ reading, readings }: MetricsRowProps) {
-  const pm25Level = reading ? getAlertLevel('pm25', reading.pm25) : 'good' as AlertLevel
-  const pm10Level = reading ? getAlertLevel('pm10', reading.pm10) : 'good' as AlertLevel
+  const pm25Value = reading ? getPm25(reading) : null
+  const pm10Value = reading ? getPm10(reading) : null
+  const pm25Level = pm25Value !== null ? getAlertLevel('pm25', pm25Value) : 'good' as AlertLevel
+  const pm10Level = pm10Value !== null ? getAlertLevel('pm10', pm10Value) : 'good' as AlertLevel
 
   // Most recent reading where the DHT11 actually returned data — bad reads
   // come through as temperature=0 AND humidity=0. PM cards always use the
@@ -62,10 +70,10 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
     const sampled = recent.filter((_, i) => i % stride === 0)
     const env = sampled.filter(r => !(r.temperature === 0 && r.humidity === 0))
     return {
-      pm25: sampled.map(r => r.pm25),
-      pm10: sampled.map(r => r.pm10),
-      temperature: env.map(r => toFahrenheit(r.temperature)),
-      humidity: env.map(r => r.humidity)
+      pm25: sampled.map(getPm25),
+      pm10: sampled.map(getPm10),
+      temperature: env.map(getTempF),
+      humidity: env.map(getHumidity)
     }
   }, [readings])
 
@@ -73,30 +81,34 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
     <div className="metrics-row">
       <MetricCard
         label="PM2.5"
-        value={reading?.pm25 ?? null}
+        value={pm25Value}
         unit={'µg/m³'}
         level={pm25Level}
-        delta={computeDelta(readings, 'pm25')}
+        delta={computeDelta(readings, getPm25)}
         spark={{ points: sparks.pm25, stroke: STROKES.pm25 }}
         index={0}
-        secondary={reading?.pm25_old != null ? { label: 'old', value: reading.pm25_old } : null}
+        secondary={reading?.pm25_old != null
+          ? { label: 'old·cal', value: calibrateOld('pm25', reading.pm25_old), ref: reading.pm25 }
+          : null}
       />
       <MetricCard
         label="PM10"
-        value={reading?.pm10 ?? null}
+        value={pm10Value}
         unit={'µg/m³'}
         level={pm10Level}
-        delta={computeDelta(readings, 'pm10')}
+        delta={computeDelta(readings, getPm10)}
         spark={{ points: sparks.pm10, stroke: STROKES.pm10 }}
         index={1}
-        secondary={reading?.pm10_old != null ? { label: 'old', value: reading.pm10_old } : null}
+        secondary={reading?.pm10_old != null
+          ? { label: 'old·cal', value: calibrateOld('pm10', reading.pm10_old), ref: reading.pm10 }
+          : null}
       />
       <MetricCard
         label="Temperature"
-        value={latestEnv ? toFahrenheit(latestEnv.temperature) : null}
+        value={latestEnv ? getTempF(latestEnv) : null}
         unit={'°F'}
         level="good"
-        delta={computeDelta(readings, 'temperature')}
+        delta={computeDelta(readings, getTempF)}
         spark={{ points: sparks.temperature, stroke: STROKES.temperature }}
         index={2}
       />
@@ -105,7 +117,7 @@ export default function MetricsRow({ reading, readings }: MetricsRowProps) {
         value={latestEnv ? latestEnv.humidity : null}
         unit="%"
         level="good"
-        delta={computeDelta(readings, 'humidity')}
+        delta={computeDelta(readings, getHumidity)}
         spark={{ points: sparks.humidity, stroke: STROKES.humidity }}
         index={3}
       />

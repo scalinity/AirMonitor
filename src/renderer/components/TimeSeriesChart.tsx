@@ -10,6 +10,7 @@ import {
   Legend
 } from 'recharts'
 import { SensorReading } from '../../shared/types'
+import { combinedPm } from '../utils/calibration'
 
 interface TimeSeriesChartProps {
   readings: SensorReading[]
@@ -63,6 +64,10 @@ interface ChartPoint {
   timestamp: number
   pm25: number
   pm10: number
+  // Combined (both sensors, calibrated) — what the PM view plots; raw fields
+  // stay for the A/B view
+  pm25c: number
+  pm10c: number
   temperature: number
   humidity: number
   pm25_old?: number | null
@@ -72,17 +77,19 @@ interface ChartPoint {
 function aggregateHourly(readings: SensorReading[]): ChartPoint[] {
   if (readings.length === 0) return []
 
-  const buckets = new Map<number, { pm25Sum: number; pm10Sum: number; tempSum: number; humSum: number; count: number; pm25OldSum: number; pm10OldSum: number; oldCount: number }>()
+  const buckets = new Map<number, { pm25Sum: number; pm10Sum: number; pm25cSum: number; pm10cSum: number; tempSum: number; humSum: number; count: number; pm25OldSum: number; pm10OldSum: number; oldCount: number }>()
 
   for (const r of readings) {
     const bucketKey = Math.floor(r.timestamp / HOUR_MS) * HOUR_MS
     let bucket = buckets.get(bucketKey)
     if (!bucket) {
-      bucket = { pm25Sum: 0, pm10Sum: 0, tempSum: 0, humSum: 0, count: 0, pm25OldSum: 0, pm10OldSum: 0, oldCount: 0 }
+      bucket = { pm25Sum: 0, pm10Sum: 0, pm25cSum: 0, pm10cSum: 0, tempSum: 0, humSum: 0, count: 0, pm25OldSum: 0, pm10OldSum: 0, oldCount: 0 }
       buckets.set(bucketKey, bucket)
     }
     bucket.pm25Sum += r.pm25
     bucket.pm10Sum += r.pm10
+    bucket.pm25cSum += combinedPm('pm25', r)
+    bucket.pm10cSum += combinedPm('pm10', r)
     bucket.tempSum += r.temperature
     bucket.humSum += r.humidity
     bucket.count++
@@ -99,6 +106,8 @@ function aggregateHourly(readings: SensorReading[]): ChartPoint[] {
       timestamp: ts,
       pm25: Math.round((bucket.pm25Sum / bucket.count) * 10) / 10,
       pm10: Math.round((bucket.pm10Sum / bucket.count) * 10) / 10,
+      pm25c: Math.round((bucket.pm25cSum / bucket.count) * 10) / 10,
+      pm10c: Math.round((bucket.pm10cSum / bucket.count) * 10) / 10,
       temperature: celsiusToFahrenheit(bucket.tempSum / bucket.count),
       humidity: Math.round((bucket.humSum / bucket.count) * 10) / 10,
       // Honest gaps: hours with no old-sensor samples stay null rather than interpolating
@@ -218,7 +227,9 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
 
     return filtered.map(r => ({
       ...r,
-      temperature: celsiusToFahrenheit(r.temperature)
+      temperature: celsiusToFahrenheit(r.temperature),
+      pm25c: Math.round(combinedPm('pm25', r) * 10) / 10,
+      pm10c: Math.round(combinedPm('pm10', r) * 10) / 10
     }))
   }, [readings, extendedReadings, range, metric])
 
@@ -226,7 +237,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
     if (filteredData.length === 0) return 10
     let values: number[]
     if (metric === 'pm') {
-      values = filteredData.map(r => Math.max(r.pm25, r.pm10))
+      values = filteredData.map(r => Math.max(r.pm25c, r.pm10c))
     } else if (metric === 'ab') {
       values = filteredData.map(r => Math.max(r[abMetric], r[`${abMetric}_old`] ?? 0))
     } else if (metric === 'temperature') {
@@ -372,7 +383,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
             <>
               <Area
                 type="monotone"
-                dataKey="pm25"
+                dataKey="pm25c"
                 name="PM2.5"
                 stroke="#00d4aa"
                 strokeWidth={2}
@@ -383,7 +394,7 @@ export default function TimeSeriesChart({ readings }: TimeSeriesChartProps) {
               />
               <Area
                 type="monotone"
-                dataKey="pm10"
+                dataKey="pm10c"
                 name="PM10"
                 stroke="#4b9fff"
                 strokeWidth={2}

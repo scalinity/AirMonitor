@@ -10,15 +10,17 @@ interface MetricCardProps {
   delta: { value: number; spanMin: number } | null
   spark: { points: number[]; stroke: string }
   index?: number
-  // Same metric read by a second sensor at the same moment (A/B comparison)
-  secondary?: { label: string; value: number } | null
+  // Second sensor's calibrated reading; delta and the drift tell compare it
+  // against `ref` (the primary sensor's raw reading), not the displayed value
+  secondary?: { label: string; value: number; ref: number } | null
 }
 
 export default function MetricCard({ label, value, unit, level, delta, spark, index = 0, secondary = null }: MetricCardProps) {
-  const secDelta = secondary != null && value !== null ? secondary.value - value : null
-  // Beyond SDS011 unit-to-unit tolerance — the sensors genuinely disagree
-  const diverged = secDelta !== null && value !== null &&
-    Math.abs(secDelta) > Math.max(5, Math.abs(value) * 0.25)
+  const secDelta = secondary != null ? secondary.value - secondary.ref : null
+  // After calibration the sensors should agree — a sustained gap past unit
+  // tolerance means one of them is drifting
+  const diverged = secondary != null && secDelta !== null &&
+    Math.abs(secDelta) > Math.max(5, Math.abs(secondary.ref) * 0.25)
 
   let deltaText = '—'
   if (delta !== null) {
