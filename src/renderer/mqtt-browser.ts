@@ -4,7 +4,9 @@
  * by using Chromium's WebSocket implementation.
  */
 
-type MqttCallback = (topic: string, payload: string) => void
+import type { MqttCredentials } from '../shared/types'
+
+type MqttCallback =(topic: string, payload: string) => void
 type StatusCallback = (status: 'connected' | 'disconnected' | 'reconnecting') => void
 
 // MQTT packet types
@@ -33,13 +35,17 @@ function encodeString(str: string): number[] {
   return [bytes.length >> 8, bytes.length & 0xff, ...Array.from(bytes)]
 }
 
-function buildConnectPacket(clientId: string): Uint8Array {
+function buildConnectPacket(clientId: string, credentials: MqttCredentials | null): Uint8Array {
   const protocol = encodeString('MQTT')
   const level = 4 // MQTT 3.1.1
-  const flags = 2 // Clean session
+  // Clean session, plus the username (0x80) and password (0x40) flags when logging in
+  const flags = credentials ? 2 | 0x80 | 0x40 : 2
   const keepalive = [0, 60] // 60 seconds
   const id = encodeString(clientId)
-  const payload = [...protocol, level, flags, ...keepalive, ...id]
+  const login = credentials
+    ? [...encodeString(credentials.username), ...encodeString(credentials.password)]
+    : []
+  const payload = [...protocol, level, flags, ...keepalive, ...id, ...login]
   const header: number[] = [CONNECT << 4, ...encodeLength(payload.length)]
   return new Uint8Array([...header, ...payload])
 }
@@ -74,13 +80,15 @@ export class BrowserMqttClient {
   private pingTimer: ReturnType<typeof setInterval> | null = null
   private brokerUrl = ''
   private topic = ''
+  private credentials: MqttCredentials | null = null
   private buffer = new Uint8Array(0)
   private packetId = 1
   private destroyed = false
 
-  connect(brokerUrl: string, topic: string): void {
+  connect(brokerUrl: string, topic: string, credentials: MqttCredentials | null = null): void {
     this.brokerUrl = brokerUrl
     this.topic = topic
+    this.credentials = credentials
     this.destroyed = false
     this.doConnect()
   }
@@ -99,7 +107,7 @@ export class BrowserMqttClient {
 
     this.ws.onopen = () => {
       const clientId = 'airmonitor_' + Math.random().toString(36).substring(2, 10)
-      this.ws!.send(buildConnectPacket(clientId))
+      this.ws!.send(buildConnectPacket(clientId, this.credentials))
     }
 
     this.ws.onmessage = (event) => {

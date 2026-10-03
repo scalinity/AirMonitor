@@ -5,6 +5,7 @@ import { initStore, addReading, getReadings, getSettings, saveSettings, importRe
 import { generateMockReading } from './mock-data'
 import { SensorReading, Settings } from '../shared/types'
 import { parsePiDatabase } from './pi-sync'
+import { getMqttCredentials, getAirdbToken } from './credentials'
 
 let mainWindow: BrowserWindow | null = null
 let mockInterval: ReturnType<typeof setInterval> | null = null
@@ -207,13 +208,21 @@ function registerIpcHandlers(): void {
     })
   })
 
+  ipcMain.handle('sensor:get-mqtt-credentials', () => getMqttCredentials())
+
   ipcMain.handle('sensor:sync-pi-db', async (_event, piDbUrl: unknown) => {
     if (typeof piDbUrl !== 'string') throw new Error('Invalid URL')
     const parsed = new URL(piDbUrl)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
       throw new Error('Invalid protocol')
     }
-    const response = await net.fetch(piDbUrl, { signal: AbortSignal.timeout(15000) })
+    // The token goes only to the Pi host saved in settings, never to an arbitrary URL.
+    const headers: Record<string, string> = {}
+    if (parsed.host === new URL(getSettings().piDatabaseUrl).host) {
+      const token = await getAirdbToken()
+      if (token) headers.Authorization = `Bearer ${token}`
+    }
+    const response = await net.fetch(piDbUrl, { headers, signal: AbortSignal.timeout(15000) })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const dbData = await response.arrayBuffer()
     if (dbData.byteLength > 50 * 1024 * 1024) throw new Error('Database too large')
