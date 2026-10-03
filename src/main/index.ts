@@ -208,7 +208,16 @@ function registerIpcHandlers(): void {
     })
   })
 
-  ipcMain.handle('sensor:get-mqtt-credentials', () => getMqttCredentials())
+  // The login goes only to the broker host saved in settings, never to an arbitrary URL.
+  ipcMain.handle('sensor:get-mqtt-credentials', (_event, brokerUrl: unknown) => {
+    if (typeof brokerUrl !== 'string') return null
+    try {
+      if (new URL(brokerUrl).host !== new URL(getSettings().brokerUrl).host) return null
+    } catch {
+      return null
+    }
+    return getMqttCredentials()
+  })
 
   ipcMain.handle('sensor:sync-pi-db', async (_event, piDbUrl: unknown) => {
     if (typeof piDbUrl !== 'string') throw new Error('Invalid URL')

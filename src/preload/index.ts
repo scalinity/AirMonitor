@@ -7,7 +7,7 @@ const api = {
   setContinuous: (enabled: boolean) => ipcRenderer.invoke('sensor:set-continuous', enabled),
   persistReading: (reading: unknown) => ipcRenderer.invoke('sensor:persist-reading', reading),
   syncPiDb: (url: string) => ipcRenderer.invoke('sensor:sync-pi-db', url),
-  getMqttCredentials: () => ipcRenderer.invoke('sensor:get-mqtt-credentials'),
+  getMqttCredentials: (brokerUrl: string) => ipcRenderer.invoke('sensor:get-mqtt-credentials', brokerUrl),
   onSensorData: (callback: (reading: unknown) => void) => {
     const handler = (_event: Electron.IpcRendererEvent, reading: unknown) => callback(reading)
     ipcRenderer.on('sensor:data', handler)

@@ -47,7 +47,7 @@ export interface ElectronAPI {
   setContinuous: (enabled: boolean) => Promise<void>
   persistReading: (reading: SensorReading) => Promise<void>
   syncPiDb: (url: string) => Promise<number>
-  getMqttCredentials: () => Promise<MqttCredentials | null>
+  getMqttCredentials: (brokerUrl: string) => Promise<MqttCredentials | null>
   onSensorData: (callback: (reading: SensorReading) => void) => () => void
   onConnectionStatus: (callback: (status: ConnectionStatus) => void) => () => void
   onContinuousMode: (callback: (enabled: boolean) => void) => () => void

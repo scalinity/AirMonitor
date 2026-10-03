@@ -137,7 +137,7 @@ export function useSensorData(
     // The broker requires a login, held in the macOS keychain and read by the main process.
     // Without it, connect anonymously and let the broker's answer show in the status dot.
     let cancelled = false
-    window.api.getMqttCredentials()
+    window.api.getMqttCredentials(settings.brokerUrl)
       .catch(() => null)
       .then((credentials) => {
         if (!cancelled) client.connect(settings.brokerUrl, settings.topic, credentials)
