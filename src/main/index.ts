@@ -231,7 +231,7 @@ function registerIpcHandlers(): void {
       const token = await getAirdbToken()
       if (token) headers.Authorization = `Bearer ${token}`
     }
-    const response = await net.fetch(piDbUrl, { headers, signal: AbortSignal.timeout(15000) })
+    const response = await net.fetch(piDbUrl, { headers, signal: AbortSignal.timeout(60000) })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const dbData = await response.arrayBuffer()
     if (dbData.byteLength > 50 * 1024 * 1024) throw new Error('Database too large')
